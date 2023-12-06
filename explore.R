@@ -3,9 +3,12 @@
 
 explore <- function() {
 
+    ## loaded CSV files into R as bug.data and site.data.
+
+    ## make sure sample id is a factor
     bug.data$bio_sample <- factor(bug.data$bio_sample)
 
-    ## replace text N/A with NA
+    ## replace text "N/A" with R NA
     incvec <- bug.data$Genus == "N/A"
     bug.data$Genus[incvec] <- NA
     incvec <- bug.data$GenusGroup == "N/A"
@@ -13,9 +16,11 @@ explore <- function() {
     incvec <- bug.data$SubFamilyOrTribe == "N/A"
     bug.data$SubFamilyOrTribe[incvec] <- NA
 
+    ## Combine genus, genusgroup, subfamily/tribe into one taxon
+    ## such that taxa not identified to genus are recorded as genusgroup
+    ## and so on.
     taxon <- bug.data$Genus
     print(sum(is.na(taxon)))
-
     incvec <- is.na(bug.data$Genus)
     taxon[incvec] <- bug.data$GenusGroup[incvec]
     print(sum(is.na(taxon)))
@@ -27,10 +32,12 @@ explore <- function() {
     incvec <- is.na(taxon)
     print(sum(incvec))
 
+    ## select taxa that occurred in at 30 samples for further analysis
     numocc <- table(taxon)
     numocc.sav <- numocc[numocc > 30]
     tnames <- names(numocc.sav)
 
+    ## drop some names that aren't actually distinct taxa
     ## drop slash groups
     w <- regexpr("/", tnames)
     tnames <- tnames[w == -1]
@@ -42,10 +49,9 @@ explore <- function() {
     w <- regexpr("GENUS", toupper(tnames))
     tnames <- tnames[w == -1]
 
-    ## drop thie group
+    ## drop taxa with "group" in the name
     w <- regexpr("GROUP", tnames)
     tnames <- tnames[w==-1]
-
     ## make site-species matrix
     ss <-matrix(FALSE, ncol = length(tnames),
                 nrow = length(levels(bug.data$bio_sample)))
@@ -53,10 +59,12 @@ explore <- function() {
     for (i in 1:length(tnames)) {
         incvec <- taxon == tnames[i]
         incvec[is.na(incvec)] <- F
-#        z <- tapply(bug.data$density_m2[incvec], bug.data$bio_sample[incvec],
-#                    sum)
-                                        #        z[is.na(z)] <- 0
-              #  ss[names(z), tnames[i]] <- as.vector(z)
+        ## uncomment below to fill the site species matrix with abundance
+##        z <- tapply(bug.data$density_m2[incvec], bug.data$bio_sample[incvec],
+##                    sum)
+##        z[is.na(z)] <- 0
+##        ss[names(z), tnames[i]] <- as.vector(z)
+        ## fill site species matrix with presence/absence
         y <- unique(bug.data$bio_sample[incvec])
         ss[y, tnames[i]] <- TRUE
         ss[,tnames[i]]<-factor(ss[,tnames[i]])
@@ -68,6 +76,7 @@ explore <- function() {
 #    print(bug.data[incvec,c ("Genus", "density_m2")])
 #    print(ss[sitep,ss[sitep,]>0])
 
+    ## convert ss matrix to data frame
     print(dim(ss))
     ss <- data.frame(ss)
     ss$bio_sample <- levels(bug.data$bio_sample)
@@ -79,32 +88,50 @@ explore <- function() {
     ss <- merge(ss, site.data,by = "bio_sample")
     print(dim(ss))
 
+    ## some log-transforms of the chemistry
     ss$conductivity <- log(ss$conductivity)
     ss$tp_ug <- log(ss$tp_ug)
     ss$nitrate_mg <- log(ss$nitrate_mg)
+    ## turbidity has a bunch of measurements that are zero
+    ## set these to half the minimum positive value that was detected
+    ## to allow for log transform
     incvec <- ss$turbidity == 0
     incvec[is.na(incvec)] <- F
     minval <- 0.5*min(ss$turbidity[!incvec], na.rm = T)
     ss$turbidity[incvec] <- minval
     ss$turbidity <- log(ss$turbidity)
 
-    png(width = 6, height =  10, units = "in", res = 600,
+#    dev.new()
+#    png(width = 5, height = 2.5, pointsize = 7, units = "in", res = 600,
+#        file = "impplot.png")
+#    par(mar = c(4,4,2,2),las=1, mfrow = c(1,2), mgp = c(2.3,1,0))
+    png(width = 5, height = 5, units = "in", res = 600, pointsize = 8,
         file = "taxop.png")
-#    par(mar = c(4,4,3,2), mfrow = c(1,2), mgp = c(2.3,1,0))
-   par(mar = c(4,8,3,2),las=1, mfrow = c(1,2), mgp = c(2.3,1,0))
+    par(mar = c(4,8,1,1), mfrow = c(1,2), mgp = c(2.3,1,0), las = 1)
+
     require(ranger)
     varname <- c("turbidity", "silt_rating")
     lab0 <- c("Turbidity", "Silt rating")
     logt <- c(T, F)
-    for (j in 1:length(varname)) {
+    for (j in 2:2) {
         incvec <- ! is.na(ss[, varname[j]])
         print(sum(incvec))
         ss0 <- ss[incvec,]
 
+        ## fit initial RF to predict varname (turbidity and silt)
         mod <- ranger(data = ss0[, c(varname[j], tnames)],
-                      dependent.variable.name = varname[j], num.trees = 2000,
+                      dependent.variable.name = varname[j], num.trees = 5000,
                       importance = "impurity_corrected")
+        ## select statistically significant taxa
+        imp <- importance_pvalues(mod)
+        namesav <- dimnames(imp)[[1]][imp[,2] < 0.01]
+
+        ## rerun model only with significant taxa
+        mod <- ranger(data = ss0[, c(varname[j], namesav)],
+                      dependent.variable.name = varname[j], num.trees = 2000,
+                      importance = "permutation")
         print(mod)
+
         predplot <- F
         if (predplot) {
             plot(mod$predictions, ss0[, varname[j]], pch = 21,
@@ -124,32 +151,45 @@ explore <- function() {
             }
             abline(0,1, lty = "dashed")
         }
-        imp <- importance_pvalues(mod)
-        namesav <- dimnames(imp)[[1]][imp[,2] < 0.01]
-        print(namesav)
 
-        mod <- ranger(data = ss0[, c(varname[j], namesav)],
-                      dependent.variable.name = varname[j], num.trees = 2000,
-                      importance = "permutation")
-        print(mod)
-        peff <- rep(NA, times = length(namesav))
-        names(peff) <- namesav
+        plottaxa <- T
+        if (plottaxa) {
+            peff <- rep(NA, times = length(namesav))
+            names(peff) <- namesav
+            
+            require(pdp)
+            for (i in 1:length(namesav)) {
+                pout <- partial(mod, pred.var = namesav[i], plot = FALSE)
+                peff[i] <- pout$yhat[2] - pout$yhat[1]
+            }
+            incvec <- peff < 0
+            peff.neg <- peff[incvec]
+            
+            iord <- order(peff.neg)
+            plot(peff.neg[iord], 1:length(peff.neg), axes = F,
+                 xlim = range(c(0, peff.neg)), 
+                 xlab = paste("Change in", lab0[j]), ylab = "")
+            abline(v = 0, lty = "dashed")
+            axis(1)
+            axis(2, at = 1:length(peff.neg), lab = names(peff.neg)[iord],
+                 cex.axis = 0.65)
+            box(bty = "l")
 
-        require(pdp)
-        for (i in 1:length(namesav)) {
-            pout <- partial(mod, pred.var = namesav[i], plot = FALSE)
-            peff[i] <- pout$yhat[2] - pout$yhat[1]
+            incvec <- peff > 0
+            peff.pos <- peff[incvec]
+            
+            iord <- order(peff.pos)
+            plot(peff.pos[iord], 1:length(peff.pos), axes = F,
+                 xlim = range(c(0, peff.pos)), 
+                 xlab = paste("Change in", lab0[j]), ylab = "")
+            abline(v = 0, lty = "dashed")
+            axis(1)
+            axis(2, at = 1:length(peff.pos), lab = names(peff.pos)[iord],
+                 cex.axis = 0.65)
+            box(bty = "l")
         }
-        print(peff)
-        iord <- order(peff)
-        plot(peff[iord], 1:length(peff), axes = F,
-             xlab = paste("Change in", lab0[j]), ylab = "")
-        abline(v = 0, lty = "dashed")
-        axis(1)
-        axis(2, at = 1:length(peff), lab = namesav[iord], cex.axis = 0.65)
-        box(bty = "l")
-
     }
+
     dev.off()
     return()
 }
