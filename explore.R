@@ -84,6 +84,9 @@ explore <- function() {
     site.data$bio_sample <- factor(site.data$bio_sample)
     ## drop 1 duplicate bio_sample
     site.data <- site.data[unique(site.data$bio_sample),]
+    ## select kicknet
+    incvec <- site.data$sample_type == "KN"
+    site.data <- site.data[incvec,]
 
     ss <- merge(ss, site.data,by = "bio_sample")
     print(dim(ss))
@@ -91,7 +94,10 @@ explore <- function() {
     ## some log-transforms of the chemistry
     ss$conductivity <- log(ss$conductivity)
     ss$tp_ug <- log(ss$tp_ug)
-    ss$nitrate_mg <- log(ss$nitrate_mg)
+    ss$nitrate_mg <- log(ss$nitrate_mg) # detection limit issues
+    ss$chloride <- log(ss$chloride_mg) # detection limit issues
+    ss$alkalinity <- log(ss$alkalinity)
+
     ## turbidity has a bunch of measurements that are zero
     ## set these to half the minimum positive value that was detected
     ## to allow for log transform
@@ -101,19 +107,19 @@ explore <- function() {
     ss$turbidity[incvec] <- minval
     ss$turbidity <- log(ss$turbidity)
 
-#    dev.new()
+    dev.new()
 #    png(width = 5, height = 2.5, pointsize = 7, units = "in", res = 600,
 #        file = "impplot.png")
 #    par(mar = c(4,4,2,2),las=1, mfrow = c(1,2), mgp = c(2.3,1,0))
-    png(width = 5, height = 5, units = "in", res = 600, pointsize = 8,
-        file = "taxop.png")
-    par(mar = c(4,8,1,1), mfrow = c(1,2), mgp = c(2.3,1,0), las = 1)
+#    png(width = 5, height = 5, units = "in", res = 600, pointsize = 8,
+#        file = "taxop.png")
+    par(mar = c(4,8,1,1), mfrow = c(2,2), mgp = c(2.3,1,0), las = 1)
 
     require(ranger)
-    varname <- c("turbidity", "silt_rating")
-    lab0 <- c("Turbidity", "Silt rating")
-    logt <- c(T, F)
-    for (j in 2:2) {
+    varname <- c("turbidity", "silt_rating", "alkalinity", "chloride")
+    lab0 <- c("Turbidity", "Silt rating", "Alkalinity", "Chloride")
+    logt <- c(T, F, T, T)
+    for (j in 1:4) {
         incvec <- ! is.na(ss[, varname[j]])
         print(sum(incvec))
         ss0 <- ss[incvec,]
@@ -132,7 +138,7 @@ explore <- function() {
                       importance = "permutation")
         print(mod)
 
-        predplot <- F
+        predplot <- T
         if (predplot) {
             plot(mod$predictions, ss0[, varname[j]], pch = 21,
                  col = "grey", bg = "white",
@@ -152,7 +158,7 @@ explore <- function() {
             abline(0,1, lty = "dashed")
         }
 
-        plottaxa <- T
+        plottaxa <- F
         if (plottaxa) {
             peff <- rep(NA, times = length(namesav))
             names(peff) <- namesav
@@ -189,7 +195,7 @@ explore <- function() {
             box(bty = "l")
         }
     }
-
+    stop()
     dev.off()
     return()
 }
