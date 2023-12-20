@@ -1,6 +1,7 @@
 ## 12.4.2023
 ## initial exploration
 
+## edit bcnt file and generate otu file
 explore <- function() {
 
     ## loaded CSV files into R as bug.data and site.data.
@@ -15,71 +16,92 @@ explore <- function() {
     bug.data$GenusGroup[incvec] <- NA
     incvec <- bug.data$SubFamilyOrTribe == "N/A"
     bug.data$SubFamilyOrTribe[incvec] <- NA
+    incvec <- bug.data$Family == "N/A"
+    bug.data$Family <- NA
+
+    ## change "sp" in species field to NA
+    incvec <- tolower(bug.data$Species) == "sp" |
+        bug.data$Species == "sp a" | bug.data$Species == "sp b" |
+            bug.data$Species == "" | bug.data$Species == "w/o setae" |
+                bug.data$Species == "N/A" | bug.data$Species == "spa" |
+                    bug.data$Species == "uid" |
+                        bug.data$Species == "imm" |
+                            bug.data$Species == "uid wsetae"
+    bug.data$Species[incvec] <- NA
+
+    incvec <- bug.data$SpeciesGroup == "N/A" | bug.data$SpeciesGroup == "uid" |
+        tolower(bug.data$SpeciesGroup) == "group"
+    print(table(bug.data$SpeciesGroup))
+    bug.data$SpeciesGroup[incvec] <- NA
+
+    ## set ambiguous Genus to NA
+    incvec <- regexpr("genus", tolower(bug.data$Genus)) != -1
+    bug.data$Genus[incvec] <- NA
+    incvec <- bug.data$Genus == "UID" | bug.data$Genus == "UNID" |
+        tolower(bug.data$Genus) == "group"
+    incvec[is.na(incvec)] <- F
+    bug.data$Genus[incvec] <- NA
+
+    incvec <- tolower(bug.data$GenusGroup) == "group"
+    incvec[is.na(incvec)] <- FALSE
+    bug.data$GenusGroup[incvec] <- NA
 
     ## Combine genus, genusgroup, subfamily/tribe into one taxon
     ## such that taxa not identified to genus are recorded as genusgroup
     ## and so on.
     taxon <- bug.data$Genus
+
+    incvec <- !is.na(bug.data$Species) & !is.na(bug.data$Genus)
+    taxon[incvec] <- paste(bug.data$Genus[incvec], bug.data$Species[incvec])
+
+    incvec <- is.na(bug.data$Species) & ! is.na(bug.data$SpeciesGroup) &
+        ! is.na(bug.data$Genus)
+    taxon[incvec] <- paste(bug.data$Genus[incvec], bug.data$SpeciesGroup[incvec])
+
     print(sum(is.na(taxon)))
-    incvec <- is.na(bug.data$Genus)
+    incvec <- is.na(taxon)
     taxon[incvec] <- bug.data$GenusGroup[incvec]
+
     print(sum(is.na(taxon)))
     incvec <- is.na(taxon)
     taxon[incvec] <- bug.data$SubFamilyOrTribe[incvec]
+
     print(sum(is.na(taxon)))
-
-    print(nrow(bug.data))
     incvec <- is.na(taxon)
-    print(sum(incvec))
+    taxon[incvec] <- bug.data$Family[incvec]
 
-    ## select taxa that occurred in at 30 samples for further analysis
-    numocc <- table(taxon)
-    numocc.sav <- numocc[numocc > 30]
-    tnames <- names(numocc.sav)
+    print(sum(is.na(taxon)))
+    bug.data$taxon <- taxon
 
-    ## drop some names that aren't actually distinct taxa
-    ## drop slash groups
-    w <- regexpr("/", tnames)
-    tnames <- tnames[w == -1]
+    incvec <- is.na(bug.data$taxon)
+    bug.data <- bug.data[!incvec,]
 
-    ## drop uid
-    tnames <- tnames[tnames != "UID" & tnames != "UNID" & tnames != "GROUP"]
+    incvec <- bug.data$density_m2 > 0
+    bug.data <- bug.data[incvec,]
 
-    ## drop genus
-    w <- regexpr("GENUS", toupper(tnames))
-    tnames <- tnames[w == -1]
+    require(bio.infer)
+    bcnt.tax <- get.taxonomic(bug.data[, c("bio_sample", "taxon", "density_m2")])
 
-    ## drop taxa with "group" in the name
-    w <- regexpr("GROUP", tnames)
-    tnames <- tnames[w==-1]
-    ## make site-species matrix
-    ss <-matrix(FALSE, ncol = length(tnames),
-                nrow = length(levels(bug.data$bio_sample)))
-    dimnames(ss) <- list(levels(bug.data$bio_sample), tnames)
-    for (i in 1:length(tnames)) {
-        incvec <- taxon == tnames[i]
-        incvec[is.na(incvec)] <- F
-        ## uncomment below to fill the site species matrix with abundance
-##        z <- tapply(bug.data$density_m2[incvec], bug.data$bio_sample[incvec],
-##                    sum)
-##        z[is.na(z)] <- 0
-##        ss[names(z), tnames[i]] <- as.vector(z)
-        ## fill site species matrix with presence/absence
-        y <- unique(bug.data$bio_sample[incvec])
-        ss[y, tnames[i]] <- TRUE
-        ss[,tnames[i]]<-factor(ss[,tnames[i]])
+    source("get.otuloc.R")
+
+    bcnt.otu <- get.otuloc(bcnt.tax, outputFile = T)
+
+    ## further edits to sum.otu.txt are required externally
+    ## to pick out a few more species rather than genus ids
+    ## these are loaded back up with load.revised.otu
+    return(bcnt.otu)
+}
+
+
+## start analysis from ss from bcnt.otu
+explore2 <- function(ss) {
+
+    tnames <- names(ss)[-1]
+    ## make ss into presence/absence
+    for (i in tnames) {
+        incvec <- ss[, i] > 0
+        ss[incvec,i] <- 1
     }
-
-    ## spot check SS
-#    sitep <- levels(bug.data$bio_sample)[10]
-#    incvec <- bug.data$bio_sample == sitep
-#    print(bug.data[incvec,c ("Genus", "density_m2")])
-#    print(ss[sitep,ss[sitep,]>0])
-
-    ## convert ss matrix to data frame
-    print(dim(ss))
-    ss <- data.frame(ss)
-    ss$bio_sample <- levels(bug.data$bio_sample)
 
     site.data$bio_sample <- factor(site.data$bio_sample)
     ## drop 1 duplicate bio_sample
@@ -91,12 +113,24 @@ explore <- function() {
     ss <- merge(ss, site.data,by = "bio_sample")
     print(dim(ss))
 
+    ## select taxa that occurred in at 30 samples for further analysis
+    numocc <- apply(ss[, tnames], 2, function(x) sum(x>0))
+    numocc.sav <- numocc[numocc > 30]
+    tnames <- names(numocc.sav)
+    print(tnames)
+
     ## some log-transforms of the chemistry
     ss$conductivity <- log(ss$conductivity)
     ss$tp_ug <- log(ss$tp_ug)
     ss$nitrate_mg <- log(ss$nitrate_mg) # detection limit issues
     ss$chloride <- log(ss$chloride_mg) # detection limit issues
+    ## drop one outlier alkalinity
+    incvec <- ss$alkalinity > 0.1
+    incvec[is.na(incvec)] <- T
+    ss <- ss[incvec,]
     ss$alkalinity <- log(ss$alkalinity)
+
+ #   plot(ss$alkalinity, ss$chloride)
 
     ## turbidity has a bunch of measurements that are zero
     ## set these to half the minimum positive value that was detected
@@ -107,19 +141,22 @@ explore <- function() {
     ss$turbidity[incvec] <- minval
     ss$turbidity <- log(ss$turbidity)
 
-    dev.new()
+#    dev.new()
 #    png(width = 5, height = 2.5, pointsize = 7, units = "in", res = 600,
 #        file = "impplot.png")
 #    par(mar = c(4,4,2,2),las=1, mfrow = c(1,2), mgp = c(2.3,1,0))
-#    png(width = 5, height = 5, units = "in", res = 600, pointsize = 8,
-#        file = "taxop.png")
-    par(mar = c(4,8,1,1), mfrow = c(2,2), mgp = c(2.3,1,0), las = 1)
+    png(width = 5, height = 5, units = "in", res = 600, pointsize = 8,
+        file = "taxop.png")
+#    par(mar = c(4,4,3,1), mfrow = c(2,2), mgp = c(2.3,1,0))
+    par(mar = c(4,10,1,1), mfrow = c(1,2), mgp = c(2.3,1,0), las = 1)
 
     require(ranger)
     varname <- c("turbidity", "silt_rating", "alkalinity", "chloride")
     lab0 <- c("Turbidity", "Silt rating", "Alkalinity", "Chloride")
     logt <- c(T, F, T, T)
-    for (j in 1:4) {
+
+    predsav <- matrix(NA, ncol = 4, nrow = nrow(ss))
+    for (j in 2) {
         incvec <- ! is.na(ss[, varname[j]])
         print(sum(incvec))
         ss0 <- ss[incvec,]
@@ -132,13 +169,17 @@ explore <- function() {
         imp <- importance_pvalues(mod)
         namesav <- dimnames(imp)[[1]][imp[,2] < 0.01]
 
+        print(namesav)
+
         ## rerun model only with significant taxa
         mod <- ranger(data = ss0[, c(varname[j], namesav)],
                       dependent.variable.name = varname[j], num.trees = 2000,
                       importance = "permutation")
         print(mod)
 
-        predplot <- T
+        predsav[incvec,j] <- mod$predictions
+
+        predplot <- F
         if (predplot) {
             plot(mod$predictions, ss0[, varname[j]], pch = 21,
                  col = "grey", bg = "white",
@@ -158,11 +199,11 @@ explore <- function() {
             abline(0,1, lty = "dashed")
         }
 
-        plottaxa <- F
+        plottaxa <- T
         if (plottaxa) {
             peff <- rep(NA, times = length(namesav))
             names(peff) <- namesav
-            
+
             require(pdp)
             for (i in 1:length(namesav)) {
                 pout <- partial(mod, pred.var = namesav[i], plot = FALSE)
@@ -170,10 +211,10 @@ explore <- function() {
             }
             incvec <- peff < 0
             peff.neg <- peff[incvec]
-            
+
             iord <- order(peff.neg)
             plot(peff.neg[iord], 1:length(peff.neg), axes = F,
-                 xlim = range(c(0, peff.neg)), 
+                 xlim = range(c(0, peff.neg)),
                  xlab = paste("Change in", lab0[j]), ylab = "")
             abline(v = 0, lty = "dashed")
             axis(1)
@@ -183,10 +224,10 @@ explore <- function() {
 
             incvec <- peff > 0
             peff.pos <- peff[incvec]
-            
+
             iord <- order(peff.pos)
             plot(peff.pos[iord], 1:length(peff.pos), axes = F,
-                 xlim = range(c(0, peff.pos)), 
+                 xlim = range(c(0, peff.pos)),
                  xlab = paste("Change in", lab0[j]), ylab = "")
             abline(v = 0, lty = "dashed")
             axis(1)
@@ -195,7 +236,9 @@ explore <- function() {
             box(bty = "l")
         }
     }
-    stop()
+
+#    dev.new()
+#    plot(predsav[,3], predsav[,4])
     dev.off()
     return()
 }
@@ -237,5 +280,7 @@ cluster.env <- function(df1) {
 }
 
 
-explore()
+#bcnt.otu <- explore()
 #cluster.env(site.data)
+
+explore2(ss)
