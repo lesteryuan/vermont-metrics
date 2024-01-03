@@ -2,7 +2,7 @@
 ## initial exploration
 
 ## edit bcnt file and generate otu file
-explore <- function() {
+explore <- function(bug.data) {
 
     ## loaded CSV files into R as bug.data and site.data.
 
@@ -10,29 +10,29 @@ explore <- function() {
     bug.data$bio_sample <- factor(bug.data$bio_sample)
 
     ## replace text "N/A" with R NA
-    incvec <- bug.data$Genus == "N/A"
-    bug.data$Genus[incvec] <- NA
-    incvec <- bug.data$GenusGroup == "N/A"
-    bug.data$GenusGroup[incvec] <- NA
-    incvec <- bug.data$SubFamilyOrTribe == "N/A"
-    bug.data$SubFamilyOrTribe[incvec] <- NA
-    incvec <- bug.data$Family == "N/A"
-    bug.data$Family <- NA
+    fnames <- c("Order", "Family", "SubFamilyOrTribe", "GenusGroup",
+                "Genus","SpeciesGroup", "Species")
+    for (i in fnames) {
+        incvec <- bug.data[, i] == "N/A"
+        bug.data[incvec,i] <- NA
+    }
 
     ## change "sp" in species field to NA
     incvec <- tolower(bug.data$Species) == "sp" |
         bug.data$Species == "sp a" | bug.data$Species == "sp b" |
             bug.data$Species == "" | bug.data$Species == "w/o setae" |
-                bug.data$Species == "N/A" | bug.data$Species == "spa" |
+                  bug.data$Species == "spa" |
                     bug.data$Species == "uid" |
                         bug.data$Species == "imm" |
-                            bug.data$Species == "uid wsetae"
+                            bug.data$Species == "uid wsetae" |
+                                tolower(bug.data$Species) == "group"
     bug.data$Species[incvec] <- NA
 
-    incvec <- bug.data$SpeciesGroup == "N/A" | bug.data$SpeciesGroup == "uid" |
-        tolower(bug.data$SpeciesGroup) == "group"
-    print(table(bug.data$SpeciesGroup))
-    bug.data$SpeciesGroup[incvec] <- NA
+
+#    incvec <- bug.data$SpeciesGroup == "uid" |
+#        tolower(bug.data$SpeciesGroup) == "group"
+#    print(table(bug.data$SpeciesGroup))
+#    bug.data$SpeciesGroup[incvec] <- NA
 
     ## set ambiguous Genus to NA
     incvec <- regexpr("genus", tolower(bug.data$Genus)) != -1
@@ -77,7 +77,9 @@ explore <- function() {
     bug.data <- bug.data[!incvec,]
 
     incvec <- bug.data$density_m2 > 0
-    bug.data <- bug.data[incvec,]
+    ## make zero densities a small number to
+    ## account for a presence
+    bug.data$density_m2[incvec] <- 0.01
 
     require(bio.infer)
     bcnt.tax <- get.taxonomic(bug.data[, c("bio_sample", "taxon", "density_m2")])
@@ -141,12 +143,12 @@ explore2 <- function(ss) {
     ss$turbidity[incvec] <- minval
     ss$turbidity <- log(ss$turbidity)
 
-#    dev.new()
+    dev.new()
 #    png(width = 5, height = 2.5, pointsize = 7, units = "in", res = 600,
 #        file = "impplot.png")
 #    par(mar = c(4,4,2,2),las=1, mfrow = c(1,2), mgp = c(2.3,1,0))
-    png(width = 5, height = 5, units = "in", res = 600, pointsize = 8,
-        file = "taxop.png")
+#    png(width = 5, height = 5, units = "in", res = 600, pointsize = 8,
+#        file = "taxop.png")
 #    par(mar = c(4,4,3,1), mfrow = c(2,2), mgp = c(2.3,1,0))
     par(mar = c(4,10,1,1), mfrow = c(1,2), mgp = c(2.3,1,0), las = 1)
 
@@ -155,27 +157,40 @@ explore2 <- function(ss) {
     lab0 <- c("Turbidity", "Silt rating", "Alkalinity", "Chloride")
     logt <- c(T, F, T, T)
 
-    predsav <- matrix(NA, ncol = 4, nrow = nrow(ss))
-    for (j in 2) {
+    predsav <- matrix(NA, ncol = length(varname), nrow = nrow(ss))
+    peff <- matrix(NA, ncol = length(varname), nrow = length(tnames))
+    dimnames(peff)[[1]] <- tnames
+    imp <- matrix(NA, ncol = length(varname), nrow = length(tnames))
+    dimnames(peff)[[1]] <- tnames
+
+    cutsav <- c(0.003, 0.015, 0.007, 0.019)
+    for (j in 1) {
         incvec <- ! is.na(ss[, varname[j]])
         print(sum(incvec))
         ss0 <- ss[incvec,]
 
-        ## fit initial RF to predict varname (turbidity and silt)
-        mod <- ranger(data = ss0[, c(varname[j], tnames)],
+        ## fit initial RF to predict varname
+        mod.imp <- ranger(data = ss0[, c(varname[j], tnames)],
                       dependent.variable.name = varname[j], num.trees = 5000,
                       importance = "impurity_corrected")
+        print(mod.imp)
         ## select statistically significant taxa
-        imp <- importance_pvalues(mod)
-        namesav <- dimnames(imp)[[1]][imp[,2] < 0.01]
+        imp0 <- importance_pvalues(mod.imp)
+        imp[,j] <- imp0[,2]
+        namesav <- dimnames(imp0)[[1]][imp0[,2] < 0.01]
 
-        print(namesav)
-
-        ## rerun model only with significant taxa
         mod <- ranger(data = ss0[, c(varname[j], namesav)],
-                      dependent.variable.name = varname[j], num.trees = 2000,
+                      dependent.variable.name = varname[j], num.trees = 5000,
                       importance = "permutation")
         print(mod)
+
+#        print(namesav)
+
+        ## rerun model only with significant taxa
+#        mod <- ranger(data = ss0[, c(varname[j], namesav)],
+#                      dependent.variable.name = varname[j], num.trees = 2000,
+#                      importance = "permutation")
+#        print(mod)
 
         predsav[incvec,j] <- mod$predictions
 
@@ -201,45 +216,80 @@ explore2 <- function(ss) {
 
         plottaxa <- T
         if (plottaxa) {
-            peff <- rep(NA, times = length(namesav))
-            names(peff) <- namesav
-
             require(pdp)
+            cat("Number selected taxa:", length(namesav), "\n")
             for (i in 1:length(namesav)) {
+                cat(i, " ")
+                if (floor(i/10) == i/10) cat("\n")
+                flush.console()
                 pout <- partial(mod, pred.var = namesav[i], plot = FALSE)
-                peff[i] <- pout$yhat[2] - pout$yhat[1]
+                peff[namesav[i],j] <- (pout$yhat[2] - pout$yhat[1])/
+                    diff(range(predsav[,j], na.rm = T))
             }
-            incvec <- peff < 0
-            peff.neg <- peff[incvec]
+            cat("\n")
 
-            iord <- order(peff.neg)
-            plot(peff.neg[iord], 1:length(peff.neg), axes = F,
-                 xlim = range(c(0, peff.neg)),
-                 xlab = paste("Change in", lab0[j]), ylab = "")
-            abline(v = 0, lty = "dashed")
-            axis(1)
-            axis(2, at = 1:length(peff.neg), lab = names(peff.neg)[iord],
-                 cex.axis = 0.65)
-            box(bty = "l")
+            cutoffs <- c(0.001,0.003,  0.007,  0.011,  0.015, 0.017, 0.019, 0.021, 0.023)
 
-            incvec <- peff > 0
-            peff.pos <- peff[incvec]
 
-            iord <- order(peff.pos)
-            plot(peff.pos[iord], 1:length(peff.pos), axes = F,
-                 xlim = range(c(0, peff.pos)),
-                 xlab = paste("Change in", lab0[j]), ylab = "")
-            abline(v = 0, lty = "dashed")
-            axis(1)
-            axis(2, at = 1:length(peff.pos), lab = names(peff.pos)[iord],
-                 cex.axis = 0.65)
-            box(bty = "l")
+            pred.err <- rep(NA, times = length(cutoffs))
+            ntaxa <- rep(NA, times = length(cutoffs))
+            for (k in 1:length(cutoffs)) {
+                selvec <- abs(peff[,j]) > cutoffs[k]
+                selvec[is.na(selvec)] <- F
+                namesnew <- dimnames(peff)[[1]][selvec]
+                ntaxa[k] <- length(namesnew)
+                if (length(namesnew) > 10) {
+                    modloc <- ranger(data = ss0[, c(varname[j], namesnew)],
+                                     dependent.variable.name = varname[j],
+                                     num.trees = 5000,
+                                     importance = "permutation")
+                    pred.err[k] <- modloc$prediction.error
+                }
+
+            }
+            print(pred.err)
+            print(ntaxa)
+
+            dev.new()
+            plot(cutoffs, pred.err)
+            stop()
+            doplot <- F
+            if (doplot) {
+                incvec <- peff < 0
+                peff.neg <- peff[incvec]
+                dev.new()
+                par(mar = c(4,10,1,1), mfrow = c(1,2), mgp = c(2.3,1,0), las = 1)
+                iord <- order(peff.neg)
+                plot(peff.neg[iord], 1:length(peff.neg), axes = F,
+                     xlim = range(c(0, peff.neg)),
+                     xlab = paste("Change in", lab0[j]), ylab = "")
+                abline(v = 0, lty = "dashed")
+                axis(1)
+                axis(2, at = 1:length(peff.neg), lab = names(peff.neg)[iord],
+                     cex.axis = 0.65)
+                box(bty = "l")
+
+                incvec <- peff > 0
+                peff.pos <- peff[incvec]
+
+                iord <- order(peff.pos)
+                plot(peff.pos[iord], 1:length(peff.pos), axes = F,
+                     xlim = range(c(0, peff.pos)),
+                     xlab = paste("Change in", lab0[j]), ylab = "")
+                abline(v = 0, lty = "dashed")
+                axis(1)
+                axis(2, at = 1:length(peff.pos), lab = names(peff.pos)[iord],
+                     cex.axis = 0.65)
+                box(bty = "l")
+            }
+
+            plot(peff[,3], peff[,4])
         }
     }
 
 #    dev.new()
 #    plot(predsav[,3], predsav[,4])
-    dev.off()
+#    dev.off()
     return()
 }
 
@@ -280,7 +330,20 @@ cluster.env <- function(df1) {
 }
 
 
-#bcnt.otu <- explore()
+#bcnt.otu <- explore(bug.data1229)
+
+## make sure to run these at species (from Aaron)
+## optioservus, stenelmis, polypedilum, rheotanytarsus, potthastia,
+## eukiefferiella, tvetenia, orthocladius/euorthocladius, simulium,
+## baetis, ephemerella*, maccaffertium*, brachycentrus, hydropsyche,
+## chimarra, rhyacophila, acroneuria, paragnetina, pteronarcys,
+
+## *keeping all macaffertium rather than just m. vicarium yields a
+## better model for salinity
+## ephemerella is an indicator for salinity, but not when only species
+## level data are used.
+
 #cluster.env(site.data)
 
 explore2(ss)
+#explore2(ss.mac)
