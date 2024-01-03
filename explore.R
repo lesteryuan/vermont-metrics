@@ -96,7 +96,7 @@ explore <- function(bug.data) {
 
 
 ## start analysis from ss from bcnt.otu
-explore2 <- function(ss) {
+explore2 <- function(ss, keytaxa = NULL) {
 
     tnames <- names(ss)[-1]
     ## make ss into presence/absence
@@ -143,12 +143,12 @@ explore2 <- function(ss) {
     ss$turbidity[incvec] <- minval
     ss$turbidity <- log(ss$turbidity)
 
-    dev.new()
+#    dev.new()
 #    png(width = 5, height = 2.5, pointsize = 7, units = "in", res = 600,
 #        file = "impplot.png")
 #    par(mar = c(4,4,2,2),las=1, mfrow = c(1,2), mgp = c(2.3,1,0))
-#    png(width = 5, height = 5, units = "in", res = 600, pointsize = 8,
-#        file = "taxop.png")
+    png(width = 5, height = 5, units = "in", res = 600, pointsize = 8,
+        file = "taxop.png")
 #    par(mar = c(4,4,3,1), mfrow = c(2,2), mgp = c(2.3,1,0))
     par(mar = c(4,10,1,1), mfrow = c(1,2), mgp = c(2.3,1,0), las = 1)
 
@@ -163,8 +163,11 @@ explore2 <- function(ss) {
     imp <- matrix(NA, ncol = length(varname), nrow = length(tnames))
     dimnames(peff)[[1]] <- tnames
 
-    cutsav <- c(0.003, 0.015, 0.007, 0.019)
-    for (j in 1) {
+    cutsav <- c(0.006, 0.015, 0.007, 0.015)
+    if (is.null(keytaxa)) {
+        keytaxa <- as.list(rep(NA,times = length(varname)))
+    }
+    for (j in 4) {
         incvec <- ! is.na(ss[, varname[j]])
         print(sum(incvec))
         ss0 <- ss[incvec,]
@@ -174,15 +177,23 @@ explore2 <- function(ss) {
                       dependent.variable.name = varname[j], num.trees = 5000,
                       importance = "impurity_corrected")
         print(mod.imp)
-        ## select statistically significant taxa
+        ## select statistically significant taxa (initial list of candidates)
         imp0 <- importance_pvalues(mod.imp)
         imp[,j] <- imp0[,2]
-        namesav <- dimnames(imp0)[[1]][imp0[,2] < 0.01]
+        namesav <- dimnames(imp0)[[1]][imp0[,2] < 0.05]
 
         mod <- ranger(data = ss0[, c(varname[j], namesav)],
                       dependent.variable.name = varname[j], num.trees = 5000,
                       importance = "permutation")
         print(mod)
+
+        if (! is.na(keytaxa[[j]][1])) {
+            modk <- ranger(data = ss0[, c(varname[j], keytaxa[[j]])],
+                      dependent.variable.name = varname[j], num.trees = 5000,
+                      importance = "permutation")
+            print(modk)
+            predsav[incvec,j] <- modk$predictions
+        }
 
 #        print(namesav)
 
@@ -192,15 +203,13 @@ explore2 <- function(ss) {
 #                      importance = "permutation")
 #        print(mod)
 
-        predsav[incvec,j] <- mod$predictions
-
         predplot <- F
         if (predplot) {
-            plot(mod$predictions, ss0[, varname[j]], pch = 21,
+            plot(modk$predictions, ss0[, varname[j]], pch = 21,
                  col = "grey", bg = "white",
                  xlab = paste(lab0[j], "(Predicted)"),
                  ylab = paste(lab0[j], "(Observed)"), axes = F)
-            mtext(paste("R2 =", round(mod$r.squared, digits = 2)),
+            mtext(paste("R2 =", round(modk$r.squared, digits = 2)),
                   side = 3, line = 0,
                   cex = 0.8)
             if (logt[j]) {
@@ -217,48 +226,71 @@ explore2 <- function(ss) {
         plottaxa <- T
         if (plottaxa) {
             require(pdp)
-            cat("Number selected taxa:", length(namesav), "\n")
-            for (i in 1:length(namesav)) {
-                cat(i, " ")
-                if (floor(i/10) == i/10) cat("\n")
-                flush.console()
-                pout <- partial(mod, pred.var = namesav[i], plot = FALSE)
-                peff[namesav[i],j] <- (pout$yhat[2] - pout$yhat[1])/
-                    diff(range(predsav[,j], na.rm = T))
-            }
-            cat("\n")
 
-            cutoffs <- c(0.001,0.003,  0.007,  0.011,  0.015, 0.017, 0.019, 0.021, 0.023)
-
-
-            pred.err <- rep(NA, times = length(cutoffs))
-            ntaxa <- rep(NA, times = length(cutoffs))
-            for (k in 1:length(cutoffs)) {
-                selvec <- abs(peff[,j]) > cutoffs[k]
-                selvec[is.na(selvec)] <- F
-                namesnew <- dimnames(peff)[[1]][selvec]
-                ntaxa[k] <- length(namesnew)
-                if (length(namesnew) > 10) {
-                    modloc <- ranger(data = ss0[, c(varname[j], namesnew)],
-                                     dependent.variable.name = varname[j],
-                                     num.trees = 5000,
-                                     importance = "permutation")
-                    pred.err[k] <- modloc$prediction.error
+            ## try different numbers of taxa to optimize model performance
+            testtaxa <- F
+            if (testtaxa) {
+                cat("Number selected taxa:", length(namesav), "\n")
+                for (i in 1:length(namesav)) {
+                    cat(i, " ")
+                    if (floor(i/10) == i/10) cat("\n")
+                    flush.console()
+                    pout <- partial(mod, pred.var = namesav[i], plot = FALSE)
+                    peff[namesav[i],j] <- (pout$yhat[2] - pout$yhat[1])/
+                        diff(range(predsav[,j], na.rm = T))
                 }
+                cat("\n")
 
+                trycuts <- F
+                if (trycuts) {
+                    cutoffs <- c(0.001,0.003,  0.007,  0.011,  0.015, 0.017,
+                                 0.019, 0.021, 0.023)
+                    pred.err <- rep(NA, times = length(cutoffs))
+                    ntaxa <- rep(NA, times = length(cutoffs))
+                    for (k in 1:length(cutoffs)) {
+                        selvec <- abs(peff[,j]) > cutoffs[k]
+                        selvec[is.na(selvec)] <- F
+                        namesnew <- dimnames(peff)[[1]][selvec]
+                        ntaxa[k] <- length(namesnew)
+                        if (length(namesnew) > 10) {
+                            modloc <- ranger(data = ss0[, c(varname[j], namesnew)],
+                                             dependent.variable.name = varname[j],
+                                             num.trees = 5000,
+                                             importance = "permutation")
+                            pred.err[k] <- modloc$prediction.error
+                        }
+                    }
+                    print(pred.err)
+                    print(ntaxa)
+                    dev.new()
+                    plot(cutoffs, pred.err)
+                    stop()
+                }
+                else {
+                    selvec <- abs(peff[,j]) > cutsav[j]
+                    selvec[is.na(selvec)] <- F
+                    keytaxa[[j]] <- dimnames(peff)[[1]][selvec]
+                }
             }
-            print(pred.err)
-            print(ntaxa)
 
-            dev.new()
-            plot(cutoffs, pred.err)
-            stop()
-            doplot <- F
+            ## plot taxa assuming keytaxa is known
+            doplot <- T
             if (doplot) {
+                peff <- rep(NA, times = length(keytaxa[[j]]))
+                names(peff) <- keytaxa[[j]]
+                for (i in 1:length(keytaxa[[j]])) {
+                    cat(i, " ")
+                    if (floor(i/10) == i/10) cat("\n")
+                    flush.console()
+                    pout <- partial(modk, pred.var = keytaxa[[j]][i], plot = FALSE)
+                    peff[i] <- (pout$yhat[2] - pout$yhat[1])/
+                        diff(range(predsav[,j], na.rm = T))
+                }
+                cat("\n")
+
                 incvec <- peff < 0
                 peff.neg <- peff[incvec]
-                dev.new()
-                par(mar = c(4,10,1,1), mfrow = c(1,2), mgp = c(2.3,1,0), las = 1)
+
                 iord <- order(peff.neg)
                 plot(peff.neg[iord], 1:length(peff.neg), axes = F,
                      xlim = range(c(0, peff.neg)),
@@ -281,15 +313,19 @@ explore2 <- function(ss) {
                 axis(2, at = 1:length(peff.pos), lab = names(peff.pos)[iord],
                      cex.axis = 0.65)
                 box(bty = "l")
+                dev.off()
+                stop()
             }
 
-            plot(peff[,3], peff[,4])
+#            plot(peff[,3], peff[,4])
+            return(keytaxa)
         }
     }
 
+
 #    dev.new()
 #    plot(predsav[,3], predsav[,4])
-#    dev.off()
+    dev.off()
     return()
 }
 
@@ -345,5 +381,5 @@ cluster.env <- function(df1) {
 
 #cluster.env(site.data)
 
-explore2(ss)
-#explore2(ss.mac)
+#keytaxa<-explore2(ss)
+explore2(ss, keytaxa)
