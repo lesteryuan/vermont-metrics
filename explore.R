@@ -98,7 +98,13 @@ explore <- function(bug.data) {
 ## start analysis from ss from bcnt.otu
 explore2 <- function(ss, keytaxa = NULL) {
 
+    ## replace slashes with underscores for later formulas
     tnames <- names(ss)[-1]
+    tnames.rev <- gsub("/", "_", tnames)
+    print(tnames.rev)
+    names(ss) <- c(names(ss)[1], tnames.rev)
+    tnames <- tnames.rev
+    
     ## make ss into presence/absence
     for (i in tnames) {
         incvec <- ss[, i] > 0
@@ -142,8 +148,6 @@ explore2 <- function(ss, keytaxa = NULL) {
     minval <- 0.5*min(ss$turbidity[!incvec], na.rm = T)
     ss$turbidity[incvec] <- minval
     ss$turbidity <- log(ss$turbidity)
-
-
 
     dev.new()
 #    png(width = 5, height = 2.5, pointsize = 7, units = "in", res = 600,
@@ -204,7 +208,7 @@ explore2 <- function(ss, keytaxa = NULL) {
     if (is.null(keytaxa)) {
         keytaxa <- as.list(rep(NA,times = length(varname)))
     }
-    for (j in 1:4) {
+    for (j in 3) {
         incvec <- ! is.na(ss[, varname[j]])
         print(sum(incvec))
         ss0 <- ss[incvec,]
@@ -225,6 +229,28 @@ explore2 <- function(ss, keytaxa = NULL) {
 #        print(mod)
 
         if (! is.na(keytaxa[[j]][1])) {
+
+            for (k in 1:length(keytaxa)) 
+                keytaxa[[k]] <- gsub("/", "_", keytaxa[[k]])
+
+            runrpart <- F
+            if (runrpart) {
+                ## random select mtry taxa for running one tree 
+                set.seed(12)
+                taxasamp <- sample(keytaxa[[j]], 7)
+                print(taxasamp)
+                require(rpart)
+                formstr <- paste(varname[j], taxasamp[1], sep = "~")
+                for (i in 2:length(taxasamp))
+                    formstr <- paste(formstr, taxasamp[i], sep = "+")
+                print(formstr)
+                mod <- rpart(as.formula(formstr), data = ss0, method = "anova",
+                             control = list(minbucket = 5))
+                print(mod)
+                plot(mod)
+                text(mod)
+                stop()
+            }
             modk <- ranger(data = ss0[, c(varname[j], keytaxa[[j]])],
                       dependent.variable.name = varname[j], num.trees = 5000,
                       importance = "permutation")
