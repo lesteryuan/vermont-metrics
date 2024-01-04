@@ -233,22 +233,59 @@ explore2 <- function(ss, keytaxa = NULL) {
             for (k in 1:length(keytaxa)) 
                 keytaxa[[k]] <- gsub("/", "_", keytaxa[[k]])
 
-            runrpart <- F
+            runrpart <- T
             if (runrpart) {
                 ## random select mtry taxa for running one tree 
-                set.seed(12)
-                taxasamp <- sample(keytaxa[[j]], 7)
-                print(taxasamp)
+                set.seed(13)
+                nit <- 100
                 require(rpart)
-                formstr <- paste(varname[j], taxasamp[1], sep = "~")
-                for (i in 2:length(taxasamp))
-                    formstr <- paste(formstr, taxasamp[i], sep = "+")
-                print(formstr)
-                mod <- rpart(as.formula(formstr), data = ss0, method = "anova",
-                             control = list(minbucket = 5))
-                print(mod)
-                plot(mod)
-                text(mod)
+                for (kk in 1:nit) {
+                    taxasamp <- c(sample(keytaxa[[j]], 6), "ENCHYTRAEIDAE")
+                    formstr <- paste(varname[j], taxasamp[1], sep = "~")
+                    for (i in 2:length(taxasamp))
+                        formstr <- paste(formstr, taxasamp[i], sep = "+")
+                    mod <- rpart(as.formula(formstr), data = ss0, method = "anova",
+                                 control = list(minbucket = 5))
+                    print(mod$variable.importance)
+
+                    a <- which("ENCHYTRAEIDAE" == names(mod$variable.importance))
+                    if (length(a) > 0) {
+                        if (a < 5) {
+                            dev.new()
+                            print(mod)
+                            plot(mod)
+                            text(mod)
+                        }
+                    }
+                }
+                stop()
+
+                require(mgcv)
+                resp1 <- ss0$LEPIDOSTOMA == 1 & ss0$PROTOPTILA == 0
+                mod1 <- gam(resp1 ~ s(ss0[, varname[j]], k = 4),
+                            family = "binomial")
+                resp2 <- ss0$LEPIDOSTOMA == 1 & ss0$PROTOPTILA == 1
+                mod2 <- gam(resp2 ~ s(ss0[, varname[j]], k = 4),
+                            family = "binomial")
+
+                pdf(width = 9, height = 6, pointsize = 10,
+                    file = "plots.pdf")
+                par(mar = c(4,4,3,1), mfrow = c(2,3), bty = "l")
+
+                iord <- order(ss0[, varname[j]])
+                for (i in 1:length(keytaxa[[j]])) {
+                    resp3 <- ss0[, keytaxa[[j]][i]] == 1
+                    mod3 <- gam(resp3 ~ s(ss0[, varname[j]], k = 4),
+                                family = "binomial")
+                    predout3 <- predict(mod3, type = "response")
+
+                    plot(ss0[iord, varname[j]], predout3[iord], ylim = c(0,1),
+                         type = "l", axes = F)
+                    logtick.exp(0.001, 10, c(1),  c(F,F))
+                    axis(2)
+                    mtext(keytaxa[[j]][i], side = 3, line= 0)
+                }
+                dev.off()
                 stop()
             }
             modk <- ranger(data = ss0[, c(varname[j], keytaxa[[j]])],
