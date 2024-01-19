@@ -96,7 +96,7 @@ explore <- function(bug.data) {
 
 
 ## start analysis from ss from bcnt.otu
-explore2 <- function(ss, keytaxa = NULL) {
+explore2 <- function(ss, site.data, keytaxa = NULL) {
 
     ## replace slashes with underscores for later formulas
     tnames <- names(ss)[-1]
@@ -104,7 +104,7 @@ explore2 <- function(ss, keytaxa = NULL) {
     print(tnames.rev)
     names(ss) <- c(names(ss)[1], tnames.rev)
     tnames <- tnames.rev
-    
+
     ## make ss into presence/absence
     for (i in tnames) {
         incvec <- ss[, i] > 0
@@ -149,29 +149,37 @@ explore2 <- function(ss, keytaxa = NULL) {
     ss$turbidity[incvec] <- minval
     ss$turbidity <- log(ss$turbidity)
 
-    dev.new()
+#    dev.new()
 #    png(width = 5, height = 2.5, pointsize = 7, units = "in", res = 600,
 #        file = "impplot.png")
 #    par(mar = c(4,4,2,2),las=1, mfrow = c(1,2), mgp = c(2.3,1,0))
-#    png(width = 5, height = 5, units = "in", res = 600, pointsize = 8,
+#    png(width = 6, height = 4, units = "in", res = 600, pointsize = 8,
 #        file = "taxop.png")
-#    par(mar = c(4,4,3,1), mfrow = c(2,2), mgp = c(2.3,1,0))
+#    par(mar = c(4,4,3,1), mfrow = c(2,3), mgp = c(2.3,1,0))
+    png(width = 5, height = 5, units = "in", res = 600, pointsize = 8,
+        file = "taxop.png")
     par(mar = c(4,10,1,1), mfrow = c(1,2), mgp = c(2.3,1,0), las = 1)
 
     require(ranger)
-    varname <- c("turbidity", "silt_rating", "alkalinity", "chloride")
-    lab0 <- c("Turbidity", "Silt rating", "Alkalinity", "Chloride")
-    logt <- c(T, F, T, T)
+    varname <- c("turbidity", "silt_rating", "alkalinity", "chloride",
+                 "tp_ug")
+    lab0 <- c("Turbidity", "Silt rating", "Alkalinity", "Chloride",
+              "Total P")
+    logt <- c(T, F, T, T, T)
 
-    dev.new()
-    pairs(ss[, varname])
-    print(cov(ss[, varname], use ="pair"))
+    ## pairs plot to examine covariance
+#    dev.new()
+#    pairs(ss[, varname])
+#    print(cov(ss[, varname], use ="pair"))
 
+    ## set up storage locations
     predsav <- matrix(NA, ncol = length(varname), nrow = nrow(ss))
     peff <- matrix(NA, ncol = length(varname), nrow = length(tnames))
     dimnames(peff)[[1]] <- tnames
+    dimnames(peff)[[2]] <- varname
     imp <- matrix(NA, ncol = length(varname), nrow = length(tnames))
-    dimnames(peff)[[1]] <- tnames
+    dimnames(imp)[[1]] <- tnames
+    dimnames(imp)[[2]] <- varname
 
     ## run weighted average to compare covariance
     ## weighted averages are super-correlated, so RF is a big
@@ -187,7 +195,7 @@ explore2 <- function(ss, keytaxa = NULL) {
             for (i in 1:length(tnames)) {
                 selvec <- ss[, tnames[i]] > 0
                 opt[i] <- mean(ss[selvec, varname[j]], na.rm = T)
-                
+
             }
             inf <- rep(NA, times = nrow(ss))
             for (i in 1:nrow(ss)) {
@@ -199,20 +207,29 @@ explore2 <- function(ss, keytaxa = NULL) {
             print(summary(lm(inf ~ ss[, varname[j]])))
         }
         plot(predsav[,3], predsav[,1])
-        
+
         print(cor(predsav[,3], predsav[,1], use = "pair"))
         stop()
     }
-        
-    cutsav <- c(0.006, 0.015, 0.007, 0.015)
+
+    ## these are prediction error cutoffs that define which
+    ## taxa to retain in the model. Identified by trying different
+    ## prediction error cutoffs to minimize overall error
+    cutsav <- c(0.006, 0.015, 0.007, 0.015, 0.003)
+    names(cutsav) <- varname
+
+    ## keytaxa are those selected by cutsav
     if (is.null(keytaxa)) {
         keytaxa <- as.list(rep(NA,times = length(varname)))
     }
-    for (j in 3) {
+
+    ## fit models
+    for (j in 5) {
         incvec <- ! is.na(ss[, varname[j]])
         print(sum(incvec))
         ss0 <- ss[incvec,]
 
+        set.seed(10)
         ## fit initial RF to predict varname
         mod.imp <- ranger(data = ss0[, c(varname[j], tnames)],
                       dependent.variable.name = varname[j], num.trees = 5000,
@@ -226,16 +243,24 @@ explore2 <- function(ss, keytaxa = NULL) {
         mod <- ranger(data = ss0[, c(varname[j], namesav)],
                       dependent.variable.name = varname[j], num.trees = 5000,
                       importance = "permutation")
+
+        predsav[incvec,j] <- mod$predictions
 #        print(mod)
 
         if (! is.na(keytaxa[[j]][1])) {
 
-            for (k in 1:length(keytaxa)) 
-                keytaxa[[k]] <- gsub("/", "_", keytaxa[[k]])
-
-            runrpart <- T
+            ## some exploratory work to see what's going on in
+            ## individual trees
+            runrpart <- F
             if (runrpart) {
-                ## random select mtry taxa for running one tree 
+
+                ## slashes don't work in rpart, so change them to
+                ## underscores
+                for (k in 1:length(keytaxa))
+                    keytaxa[[k]] <- gsub("/", "_", keytaxa[[k]])
+
+                ## randomly select mtry taxa for running one tree
+                ## closer look at the tree structure
                 set.seed(13)
                 nit <- 100
                 require(rpart)
@@ -288,6 +313,9 @@ explore2 <- function(ss, keytaxa = NULL) {
                 dev.off()
                 stop()
             }
+
+            ## rerun model with just key taxa and
+            ## save predictions over previous ones
             modk <- ranger(data = ss0[, c(varname[j], keytaxa[[j]])],
                       dependent.variable.name = varname[j], num.trees = 5000,
                       importance = "permutation")
@@ -305,6 +333,7 @@ explore2 <- function(ss, keytaxa = NULL) {
 #                      importance = "permutation")
 #        print(mod)
 
+        ## plot inferred vs observed env conditions
         predplot <- F
         if (predplot) {
             plot(modk$predictions, ss0[, varname[j]], pch = 21,
@@ -324,14 +353,15 @@ explore2 <- function(ss, keytaxa = NULL) {
             }
             abline(0,1, lty = "dashed")
         }
-
-        plottaxa <- F
-        if (plottaxa) {
+        ## otherwise plot important taxa
+        else {
             require(pdp)
 
             ## try different numbers of taxa to optimize model performance
             testtaxa <- F
             if (testtaxa) {
+                ## calculate partial dependence relationship
+                ## for each taxon selected by importance significance
                 cat("Number selected taxa:", length(namesav), "\n")
                 for (i in 1:length(namesav)) {
                     cat(i, " ")
@@ -343,6 +373,8 @@ explore2 <- function(ss, keytaxa = NULL) {
                 }
                 cat("\n")
 
+                ## select TRUE here to try different cutoff values
+                ## for peff to maximize model performance
                 trycuts <- F
                 if (trycuts) {
                     cutoffs <- c(0.001,0.003,  0.007,  0.011,  0.015, 0.017,
@@ -420,10 +452,12 @@ explore2 <- function(ss, keytaxa = NULL) {
             }
 
 #            plot(peff[,3], peff[,4])
-            return(keytaxa)
-        }
-    }
 
+        }
+
+    }
+    dev.off()
+    return(keytaxa)
 
     dev.new()
     pairs(predsav)
@@ -483,5 +517,5 @@ cluster.env <- function(df1) {
 
 #cluster.env(site.data)
 
-#keytaxa<-explore2(ss)
-explore2(ss, keytaxa)
+#keytaxa<-explore2(ss, site.data)
+explore2(ss, site.data, keytaxa)
