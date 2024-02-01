@@ -156,9 +156,9 @@ explore2 <- function(ss, site.data, keytaxa = NULL) {
 #    png(width = 6, height = 4, units = "in", res = 600, pointsize = 8,
 #        file = "taxop.png")
 #    par(mar = c(4,4,3,1), mfrow = c(2,3), mgp = c(2.3,1,0))
-    png(width = 5, height = 5, units = "in", res = 600, pointsize = 8,
-        file = "taxop.png")
-    par(mar = c(4,10,1,1), mfrow = c(1,2), mgp = c(2.3,1,0), las = 1)
+#    png(width = 5, height = 5, units = "in", res = 600, pointsize = 8,
+#        file = "taxop.png")
+#    par(mar = c(4,10,1,1), mfrow = c(1,2), mgp = c(2.3,1,0), las = 1)
 
     require(ranger)
     varname <- c("turbidity", "silt_rating", "alkalinity", "chloride",
@@ -174,6 +174,7 @@ explore2 <- function(ss, site.data, keytaxa = NULL) {
 
     ## set up storage locations
     predsav <- matrix(NA, ncol = length(varname), nrow = nrow(ss))
+    dimnames(predsav)[[2]] <- varname
     peff <- matrix(NA, ncol = length(varname), nrow = length(tnames))
     dimnames(peff)[[1]] <- tnames
     dimnames(peff)[[2]] <- varname
@@ -181,15 +182,20 @@ explore2 <- function(ss, site.data, keytaxa = NULL) {
     dimnames(imp)[[1]] <- tnames
     dimnames(imp)[[2]] <- varname
 
+    print(cor(ss[, varname], use = "pair"))
+    stop()
+
     ## run weighted average to compare covariance
     ## weighted averages are super-correlated, so RF is a big
     ## improvement
     dowa <- F
     if (dowa) {
-        predsav2 <- matrix(NA, ncol = length(varname), nrow = nrow(ss))
-        dev.new()
-        par(mar = c(4,4,1,1), mfrow = c(1,2))
-        for (j in c(1,3)) {
+        pred.wa <- matrix(NA, ncol = length(varname), nrow = nrow(ss))
+        dimnames(pred.wa)[[2]] <- varname
+        png(width = 6, height = 4, units = "in", res = 600, pointsize = 8,
+            file = "taxop.png")
+        par(mar = c(4,4,3,1), mfrow = c(2,3), mgp = c(2.3,1,0))
+        for (j in 1:length(varname)) {
             opt <- rep(NA, times = length(tnames))
             names(opt) <- tnames
             for (i in 1:length(tnames)) {
@@ -202,13 +208,29 @@ explore2 <- function(ss, site.data, keytaxa = NULL) {
                 selvec <- ss[i, tnames] > 0
                 inf[i] <- mean(opt[selvec])
             }
-            predsav[,j] <- inf
-            plot(ss[, varname[j]], inf)
-            print(summary(lm(inf ~ ss[, varname[j]])))
-        }
-        plot(predsav[,3], predsav[,1])
+            pred.wa[,j] <- inf
+            modfit <- lm(ss[, varname[j]]~inf)
 
-        print(cor(predsav[,3], predsav[,1], use = "pair"))
+            plot(inf, ss[, varname[j]], pch = 21,
+                 col = "grey", bg = "white",
+                 xlab = paste(lab0[j], "(Predicted)"),
+                 ylab = paste(lab0[j], "(Observed)"), axes = F)
+            mtext(paste("R2 =", round(summary(modfit)$r.squared, digits = 2)),
+                  side = 3, line = 0,
+                  cex = 0.8)
+            if (logt[j]) {
+                logtick.exp(0.001, 10, c(1,2), c(T,F))
+            }
+            else {
+                axis(1)
+                axis(2)
+                box(bty = "l")
+            }
+            abline(modfit)
+
+        }
+        dev.off()
+        save(pred.wa, file = "pred.wa.rda")
         stop()
     }
 
@@ -224,7 +246,7 @@ explore2 <- function(ss, site.data, keytaxa = NULL) {
     }
 
     ## fit models
-    for (j in 5) {
+    for (j in 1:length(varname)) {
         incvec <- ! is.na(ss[, varname[j]])
         print(sum(incvec))
         ss0 <- ss[incvec,]
@@ -247,7 +269,7 @@ explore2 <- function(ss, site.data, keytaxa = NULL) {
         predsav[incvec,j] <- mod$predictions
 #        print(mod)
 
-        if (! is.na(keytaxa[[j]][1])) {
+        if (! is.null(keytaxa[[j]][1])) {
 
             ## some exploratory work to see what's going on in
             ## individual trees
@@ -334,7 +356,7 @@ explore2 <- function(ss, site.data, keytaxa = NULL) {
 #        print(mod)
 
         ## plot inferred vs observed env conditions
-        predplot <- F
+        predplot <- T
         if (predplot) {
             plot(modk$predictions, ss0[, varname[j]], pch = 21,
                  col = "grey", bg = "white",
@@ -457,7 +479,9 @@ explore2 <- function(ss, site.data, keytaxa = NULL) {
 
     }
     dev.off()
-    return(keytaxa)
+
+    return(predsav)
+#    return(keytaxa)
 
     dev.new()
     pairs(predsav)
@@ -518,4 +542,4 @@ cluster.env <- function(df1) {
 #cluster.env(site.data)
 
 #keytaxa<-explore2(ss, site.data)
-explore2(ss, site.data, keytaxa)
+predsav.rf <- explore2(ss, site.data, keytaxa)
