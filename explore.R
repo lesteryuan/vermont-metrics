@@ -183,7 +183,6 @@ explore2 <- function(ss, site.data, keytaxa = NULL) {
     dimnames(imp)[[2]] <- varname
 
     print(cor(ss[, varname], use = "pair"))
-    stop()
 
     ## run weighted average to compare covariance
     ## weighted averages are super-correlated, so RF is a big
@@ -356,7 +355,7 @@ explore2 <- function(ss, site.data, keytaxa = NULL) {
 #        print(mod)
 
         ## plot inferred vs observed env conditions
-        predplot <- T
+        predplot <- F
         if (predplot) {
             plot(modk$predictions, ss0[, varname[j]], pch = 21,
                  col = "grey", bg = "white",
@@ -432,6 +431,29 @@ explore2 <- function(ss, site.data, keytaxa = NULL) {
             ## plot taxa assuming keytaxa is known
             doplot <- T
             if (doplot) {
+
+                domvar <- FALSE
+                if (domvar) {
+                    peff <- matrix(NA, ncol = length(keytaxa[[j]]),
+                                   nrow = length(keytaxa[[j]]))
+                    dimnames(peff)[[1]] <- keytaxa[[j]]
+                    dimnames(peff)[[2]] <- keytaxa[[j]]
+                    for (ii in 2:length(keytaxa[[j]])) {
+                        print(ii)
+                        flush.console()
+                        for (jj in 1:(ii-1)) {
+                            pout <- partial(modk,
+                                            pred.var = c(keytaxa[[j]][ii],
+                                                         keytaxa[[j]][jj]),
+                                            plot = FALSE)
+                            peff[ii,jj] <- diff(range(pout$yhat))/
+                                diff(range(predsav[,j], na.rm = T))
+                        }
+                    }
+                    save(peff, file = "peff.rda")
+                    stop()
+                }
+
                 peff <- rep(NA, times = length(keytaxa[[j]]))
                 names(peff) <- keytaxa[[j]]
                 for (i in 1:length(keytaxa[[j]])) {
@@ -442,6 +464,7 @@ explore2 <- function(ss, site.data, keytaxa = NULL) {
                     peff[i] <- (pout$yhat[2] - pout$yhat[1])/
                         diff(range(predsav[,j], na.rm = T))
                 }
+                save(peff, file = "peff.single.rda")
                 cat("\n")
 
                 incvec <- peff < 0
