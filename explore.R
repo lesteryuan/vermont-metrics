@@ -187,14 +187,15 @@ explore2 <- function(ss, site.data, keytaxa = NULL) {
     ## run weighted average to compare covariance
     ## weighted averages are super-correlated, so RF is a big
     ## improvement
-    dowa <- F
+    dowa <- T
     if (dowa) {
         pred.wa <- matrix(NA, ncol = length(varname), nrow = nrow(ss))
         dimnames(pred.wa)[[2]] <- varname
-        png(width = 6, height = 4, units = "in", res = 600, pointsize = 8,
-            file = "taxop.png")
+#        png(width = 6, height = 4, units = "in", res = 600, pointsize = 8,
+#            file = "taxop.png")
+        dev.new()
         par(mar = c(4,4,3,1), mfrow = c(2,3), mgp = c(2.3,1,0))
-        for (j in 1:length(varname)) {
+        for (j in 1:1) {
             opt <- rep(NA, times = length(tnames))
             names(opt) <- tnames
             for (i in 1:length(tnames)) {
@@ -228,9 +229,9 @@ explore2 <- function(ss, site.data, keytaxa = NULL) {
             abline(modfit)
 
         }
-        dev.off()
-        save(pred.wa, file = "pred.wa.rda")
-        stop()
+#        dev.off()
+#        save(pred.wa, file = "pred.wa.rda")
+#        stop()
     }
 
     ## these are prediction error cutoffs that define which
@@ -432,6 +433,8 @@ explore2 <- function(ss, site.data, keytaxa = NULL) {
             doplot <- T
             if (doplot) {
 
+                ## examine pairwise combinations of taxa
+                ## to see if there are synergistic effects
                 domvar <- FALSE
                 if (domvar) {
                     peff <- matrix(NA, ncol = length(keytaxa[[j]]),
@@ -466,6 +469,17 @@ explore2 <- function(ss, site.data, keytaxa = NULL) {
                 }
                 save(peff, file = "peff.single.rda")
                 cat("\n")
+
+                dev.new()
+                plot(peff, opt[names(peff)])
+                stop()
+
+                ## simple inference
+                infout <- as.matrix(ss0[, names(peff)]) %*% peff
+                dev.new()
+                plot(infout, ss0[, varname[j]])
+                print(summary(lm(ss0[, varname[j]] ~ infout)))
+                stop()
 
                 incvec <- peff < 0
                 peff.neg <- peff[incvec]
