@@ -200,58 +200,22 @@ runwa <- function(ss, varname) {
     return(pred.wa)
 }
 
+## run RF model for inference
 runRF <- function(ss, varname) {
-
-#    dev.new()
-#    png(width = 5, height = 2.5, pointsize = 7, units = "in", res = 600,
-#        file = "impplot.png")
-#    par(mar = c(4,4,2,2),las=1, mfrow = c(1,2), mgp = c(2.3,1,0))
-#    png(width = 6, height = 4, units = "in", res = 600, pointsize = 8,
-#        file = "taxop.png")
-#    par(mar = c(4,4,3,1), mfrow = c(2,3), mgp = c(2.3,1,0))
-#    png(width = 5, height = 5, units = "in", res = 600, pointsize = 8,
-#        file = "taxop.png")
-#    par(mar = c(4,10,1,1), mfrow = c(1,2), mgp = c(2.3,1,0), las = 1)
-
     require(ranger)
-
-    ## pairs plot to examine covariance
-#    dev.new()
-#    pairs(ss[, varname])
-#    print(cov(ss[, varname], use ="pair"))
+    tnames <- attr(ss, "taxa")
 
     ## set up storage locations
     predsav <- matrix(NA, ncol = length(varname), nrow = nrow(ss))
     dimnames(predsav)[[2]] <- varname
-    peff <- matrix(NA, ncol = length(varname), nrow = length(tnames))
-    dimnames(peff)[[1]] <- tnames
-    dimnames(peff)[[2]] <- varname
-    imp <- matrix(NA, ncol = length(varname), nrow = length(tnames))
-    dimnames(imp)[[1]] <- tnames
-    dimnames(imp)[[2]] <- varname
-
-    print(cor(ss[, varname], use = "pair"))
-
-    ## run weighted average to compare covariance
-    ## weighted averages are super-correlated, so RF is a big
-    ## improvement
-
-    ## these are prediction error cutoffs that define which
-    ## taxa to retain in the model. Identified by trying different
-    ## prediction error cutoffs to minimize overall error
-    cutsav <- c(0.006, 0.015, 0.007, 0.015, 0.003)
-    names(cutsav) <- varname
-
-    ## keytaxa are those selected by cutsav
-    if (is.null(keytaxa)) {
-        keytaxa <- as.list(rep(NA,times = length(varname)))
-    }
-
+    pefflist <- as.list(rep(NA, times = length(varname)))
+    names(pefflist) <- varname
+                        
     ## fit models
     for (j in 1:length(varname)) {
 
+        ## drop missing measurements
         incvec <- ! is.na(ss[, varname[j]])
-        print(sum(incvec))
         ss0 <- ss[incvec,]
 
         domtry <- F ## optimize selection of mtry
@@ -282,7 +246,6 @@ runRF <- function(ss, varname) {
 #        print(mod.imp)
         ## select statistically significant taxa (initial list of candidates)
             imp0 <- importance_pvalues(mod.imp, method = "janitza")
-            imp[,j] <- imp0[,2]
             namesav[[i]] <- dimnames(imp0)[[1]][imp0[,2] < 0.05]
         }
         namesall <- unlist(namesav)
@@ -293,189 +256,91 @@ runRF <- function(ss, varname) {
         print(length(namesav))
 
         ## rerun model with selected taxa
-        mod <- ranger(data = ss0[, c(varname[j], tnames)],
+        mod <- ranger(data = ss0[, c(varname[j], namesav)],
                       dependent.variable.name = varname[j], num.trees = 5000,
                       importance = "permutation")
-
         print(mod)
 
         predsav[incvec,j] <- mod$predictions
 
-        ## plot inferred vs observed env conditions
-        predplot <- F
-        if (predplot) {
-            plot(modk$predictions, ss0[, varname[j]], pch = 21,
-                 col = "grey", bg = "white",
-                 xlab = paste(lab0[j], "(Predicted)"),
-                 ylab = paste(lab0[j], "(Observed)"), axes = F)
-            mtext(paste("R2 =", round(modk$r.squared, digits = 2)),
-                  side = 3, line = 0,
-                  cex = 0.8)
-            if (logt[j]) {
-                logtick.exp(0.001, 10, c(1,2), c(F,F))
-            }
-            else {
-                axis(1)
-                axis(2)
-                box(bty = "l")
-            }
-            abline(0,1, lty = "dashed")
-            stop()
+        ## calculate opt for each taxon
+        require(pdp)
+        peff <- rep(NA, times = length(namesav))
+        names(peff) <- namesav
+        for (i in 1:length(namesav)) {
+            cat(i, " ")
+            if (floor(i/10) == i/10) cat("\n")
+            flush.console()
+            pout <- partial(mod, pred.var = namesav[i], plot = FALSE)
+            peff[i] <- (pout$yhat[2] - pout$yhat[1])/
+                diff(range(predsav[,j], na.rm = T))
         }
-        ## otherwise plot important taxa
-        else {
-            require(pdp)
+        cat("\n")
 
-            ## try different numbers of taxa to optimize model performance
-            testtaxa <- F
-            if (testtaxa) {
-                ## calculate partial dependence relationship
-                ## for each taxon selected by importance significance
-                cat("Number selected taxa:", length(namesav), "\n")
-                for (i in 1:length(namesav)) {
-                    cat(i, " ")
-                    if (floor(i/10) == i/10) cat("\n")
-                    flush.console()
-                    pout <- partial(mod, pred.var = namesav[i], plot = FALSE)
-                    peff[namesav[i],j] <- (pout$yhat[2] - pout$yhat[1])/
-                        diff(range(predsav[,j], na.rm = T))
-                }
-                cat("\n")
-
-                ## select TRUE here to try different cutoff values
-                ## for peff to maximize model performance
-                trycuts <- F
-                if (trycuts) {
-                    cutoffs <- c(0.001,0.003,  0.007,  0.011,  0.015, 0.017,
-                                 0.019, 0.021, 0.023)
-                    pred.err <- rep(NA, times = length(cutoffs))
-                    ntaxa <- rep(NA, times = length(cutoffs))
-                    for (k in 1:length(cutoffs)) {
-                        selvec <- abs(peff[,j]) > cutoffs[k]
-                        selvec[is.na(selvec)] <- F
-                        namesnew <- dimnames(peff)[[1]][selvec]
-                        ntaxa[k] <- length(namesnew)
-                        if (length(namesnew) > 10) {
-                            modloc <- ranger(data = ss0[, c(varname[j], namesnew)],
-                                             dependent.variable.name = varname[j],
-                                             num.trees = 5000,
-                                             importance = "permutation")
-                            pred.err[k] <- modloc$prediction.error
-                        }
-                    }
-                    print(pred.err)
-                    print(ntaxa)
-                    dev.new()
-                    plot(cutoffs, pred.err)
-                    stop()
-                }
-                else {
-                    selvec <- abs(peff[,j]) > cutsav[j]
-                    selvec[is.na(selvec)] <- F
-                    keytaxa[[j]] <- dimnames(peff)[[1]][selvec]
-                }
-            }
-
-            ## plot taxa assuming keytaxa is known
-            doplot <- T
-            if (doplot) {
-
-                ## examine pairwise combinations of taxa
-                ## to see if there are synergistic effects
-                domvar <- FALSE
-                if (domvar) {
-                    peff <- matrix(NA, ncol = length(keytaxa[[j]]),
-                                   nrow = length(keytaxa[[j]]))
-                    dimnames(peff)[[1]] <- keytaxa[[j]]
-                    dimnames(peff)[[2]] <- keytaxa[[j]]
-                    for (ii in 2:length(keytaxa[[j]])) {
-                        print(ii)
-                        flush.console()
-                        for (jj in 1:(ii-1)) {
-                            pout <- partial(modk,
-                                            pred.var = c(keytaxa[[j]][ii],
-                                                         keytaxa[[j]][jj]),
-                                            plot = FALSE)
-                            peff[ii,jj] <- diff(range(pout$yhat))/
-                                diff(range(predsav[,j], na.rm = T))
-                        }
-                    }
-                    save(peff, file = "peff.rda")
-                    stop()
-                }
-
-#                peff <- rep(NA, times = length(keytaxa[[j]]))
-#                names(peff) <- keytaxa[[j]]
-                peff <- rep(NA, times = length(namesav))
-                names(peff) <- namesav
-#                for (i in 1:length(keytaxa[[j]])) {
-                for (i in 1:length(namesav)) {
-                    cat(i, " ")
-                    if (floor(i/10) == i/10) cat("\n")
-                    flush.console()
-                    ##                    pout <- partial(modk, pred.var = keytaxa[[j]][i], plot = FALSE)
-                    pout <- partial(mod, pred.var = namesav[i], plot = FALSE)
-                    peff[i] <- (pout$yhat[2] - pout$yhat[1])/
-                        diff(range(predsav[,j], na.rm = T))
-                }
-                save(peff, file = "peff.single.rda")
-                cat("\n")
-
-                dev.new()
-                plot(peff, opt[names(peff)])
-
-
-                ## simple inference
-                infout <- as.matrix(ss0[, names(peff)]) %*% peff
-                dev.new()
-                plot(infout, ss0[, varname[j]])
-                print(summary(lm(ss0[, varname[j]] ~ infout)))
-                stop()
-
-                incvec <- peff < 0
-                peff.neg <- peff[incvec]
-
-                iord <- order(peff.neg)
-                plot(peff.neg[iord], 1:length(peff.neg), axes = F,
-                     xlim = range(c(0, peff.neg)),
-                     xlab = paste("Change in", lab0[j]), ylab = "")
-                abline(v = 0, lty = "dashed")
-                axis(1)
-                axis(2, at = 1:length(peff.neg), lab = names(peff.neg)[iord],
-                     cex.axis = 0.65)
-                box(bty = "l")
-
-                incvec <- peff > 0
-                peff.pos <- peff[incvec]
-
-                iord <- order(peff.pos)
-                plot(peff.pos[iord], 1:length(peff.pos), axes = F,
-                     xlim = range(c(0, peff.pos)),
-                     xlab = paste("Change in", lab0[j]), ylab = "")
-                abline(v = 0, lty = "dashed")
-                axis(1)
-                axis(2, at = 1:length(peff.pos), lab = names(peff.pos)[iord],
-                     cex.axis = 0.65)
-                box(bty = "l")
-                dev.off()
-                stop()
-            }
-
-#            plot(peff[,3], peff[,4])
-
-        }
+        pefflist[[j]] <- peff
 
     }
-    dev.off()
 
-    return(predsav)
-#    return(keytaxa)
+    return(list(predsav, pefflist))
+}
+
+postp <- function(ss, varname,  pred.RF, lab0, logt) {
+    dev.new()
+    par(mar = c(4,4,3,1), mfrow = c(2,3), mgp= c(2.3,1,0))
+    for (j in 1:length(varname)) {
+        plot(pred.RF[[1]][, varname[j]], ss[, varname[j]], pch = 21,
+             col = "grey", bg = "white",
+             xlab = paste(lab0[j], "(Predicted)"),
+             ylab = paste(lab0[j], "(Observed)"), axes = F)
+        mod <- lm(ss[, varname[j]] ~ pred.RF[[1]][, varname[j]])
+        mtext(paste("R2 =", round(summary(mod)$r.squared, digits = 2)),
+              side = 3, line = 0,
+              cex = 0.8)
+
+        if (logt[j]) {
+            logtick.exp(0.001, 10, c(1,2), c(F,F))
+        }
+        else {
+            axis(1)
+            axis(2)
+            box(bty = "l")
+        }
+        abline(0,1, lty = "dashed")
+        abline(mod)
+    }
 
     dev.new()
-    pairs(predsav)
-    print(cov(predsav, use = "pair"))
-    return()
+    par(mar = c(4,4,3,1), mfrow = c(2,3), mgp= c(2.3,1,0))    
+    ## simple inference using RF optima
+    for (j in 1:length(varname)) {
+        peff <- pred.RF[[2]][[j]]
+        infout <- as.matrix(ss[, names(peff)]) %*% peff
+        plot(infout, ss[, varname[j]], pch = 21,
+             col = "grey", bg = "white",
+             xlab = paste(lab0[j], "(Predicted)"),
+             ylab = paste(lab0[j], "(Observed)"), axes = F)
+        mod <- lm(ss[, varname[j]] ~ infout)
+        mtext(paste("R2 =", round(summary(mod)$r.squared, digits = 2)),
+              side = 3, line = 0,
+              cex = 0.8)
+
+        if (logt[j]) {
+            logtick.exp(0.001, 10, c(1,2), c(F,F))
+        }
+        else {
+            axis(1)
+            axis(2)
+            box(bty = "l")
+        }
+        abline(0,1, lty = "dashed")
+        abline(mod)
+    }
+    stop()
+
+    plot(peff, opt[names(peff)])
+    stop()
 }
+
 
 ## cluster predictor variables
 cluster.env <- function(df1) {
@@ -539,5 +404,6 @@ logt <- c(T, F, T, T, T)
 
 #pred.wa <-runwa(ssall, varname)
 
-#keytaxa<-explore2(ss, site.data)
-#predsav.rf <- explore2(ss, site.data, keytaxa)
+#pred.RF <- runRF(ssall, varname)
+
+postp(ssall, varname, pred.RF, lab0, logt)
