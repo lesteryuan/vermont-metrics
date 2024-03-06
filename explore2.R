@@ -151,53 +151,57 @@ makefinaldf <- function(ss, site.data) {
 }
 
 runwa <- function(ss, varname) {
-    
+
     tnames <- attr(ss, "taxa")
 
+    ## set up 10 fold x validation
+    isamp <- sample(nrow(ss), nrow(ss))
+    nbin <- nrow(ss)/10
+    print(nrow(ss))
+    istart <- round(seq(1,  by = nbin, length = 11))
+    istop <- istart[-1]-1
+    istart <- istart[-11]
+
     pred.wa <- matrix(NA, ncol = length(varname), nrow = nrow(ss))
+    optlist <- as.list(rep(NA, times = length(varname)))
     dimnames(pred.wa)[[2]] <- varname
-    #        png(width = 6, height = 4, units = "in", res = 600, pointsize = 8,
-#            file = "taxop.png")
-    dev.new()
-    par(mar = c(4,4,3,1), mfrow = c(2,3), mgp = c(2.3,1,0))
+
     for (j in 1:length(varname)) {
-        incvec <- ! is.na(ss[, varname[j]])
-        print(sum(incvec))
-        ss0 <- ss[incvec,]
-        
+
+        for (k in 1:10) {
+            ind <- isamp[istart[k]:istop[k]]
+            ss0 <- ss[-ind,]
+
+            opt <- rep(NA, times = length(tnames))
+            names(opt) <- tnames
+            for (i in 1:length(tnames)) {
+                selvec <- ss0[, tnames[i]] > 0
+                opt[i] <- mean(ss0[selvec, varname[j]], na.rm = T)
+            }
+
+            inf <- rep(NA, length(ind))
+            for (i in 1:length(ind)) {
+                selvec <- ss[ind[i], tnames] > 0
+                inf[i] <- mean(opt[selvec])
+            }
+            pred.wa[ind,j] <- inf
+        }
+
+        ## one more run to get optima from full data set
         opt <- rep(NA, times = length(tnames))
         names(opt) <- tnames
         for (i in 1:length(tnames)) {
-            selvec <- ss0[, tnames[i]] > 0
-            opt[i] <- mean(ss0[selvec, varname[j]], na.rm = T)
-            
+            selvec <- ss[, tnames[i]] > 0
+            opt[i] <- mean(ss[selvec, varname[j]], na.rm = T)
         }
-        inf <- rep(NA, times = nrow(ss0))
-        for (i in 1:nrow(ss0)) {
-            selvec <- ss0[i, tnames] > 0
-            inf[i] <- mean(opt[selvec])
-        }
-        pred.wa[incvec,j] <- inf
-        modfit <- lm(ss0[, varname[j]]~inf)
-        
-        plot(inf, ss0[, varname[j]], pch = 21,
-             col = "grey", bg = "white",
-             xlab = paste(lab0[j], "(Predicted)"),
-             ylab = paste(lab0[j], "(Observed)"), axes = F)
-        mtext(paste("R2 =", round(summary(modfit)$r.squared, digits = 2)),
-              side = 3, line = 0,
-              cex = 0.8)
-        if (logt[j]) {
-            logtick.exp(0.001, 10, c(1,2), c(T,F))
-        }
-        else {
-            axis(1)
-            axis(2)
-            box(bty = "l")
-        }
-        abline(modfit)
+
+#        modfit <- lm(ss0[, varname[j]]~inf)
+#        cc <- coef(modfit)
+#        pred.wa[incvec,j] <- predict(modfit)
+        ## deshrink optima
+        optlist[[j]] <- opt
     }
-    return(pred.wa)
+    return(list(pred.wa, optlist))
 }
 
 ## run RF model for inference
@@ -210,7 +214,7 @@ runRF <- function(ss, varname) {
     dimnames(predsav)[[2]] <- varname
     pefflist <- as.list(rep(NA, times = length(varname)))
     names(pefflist) <- varname
-                        
+
     ## fit models
     for (j in 1:length(varname)) {
 
@@ -233,7 +237,7 @@ runRF <- function(ss, varname) {
             plot(kmtry, err)
             stop()
         }
-        
+
         set.seed(10)
         ## fit RF 20 times to get multiple assessments of significant taxa
         nrun <- 20
@@ -285,60 +289,151 @@ runRF <- function(ss, varname) {
 }
 
 postp <- function(ss, varname,  pred.RF, lab0, logt) {
+
+    plotpred <- function(predmat, varname, ss, lab0, logt) {
+        dev.new()
+        par(mar = c(4,4,3,1), mfrow = c(2,3), mgp= c(2.3,1,0))
+        for (j in 1:length(varname)) {
+            plot(predmat[, varname[j]], ss[, varname[j]], pch = 21,
+                 col = "grey", bg = "white",
+                 xlab = paste(lab0[j], "(Predicted)"),
+                 ylab = paste(lab0[j], "(Observed)"), axes = F)
+            mod <- lm(ss[, varname[j]] ~ predmat[, varname[j]])
+            mtext(paste("R2 =", round(summary(mod)$r.squared, digits = 2)),
+                  side = 3, line = 0,
+                  cex = 0.8)
+
+            if (logt[j]) {
+                logtick.exp(0.001, 10, c(1,2), c(F,F))
+            }
+            else {
+                axis(1)
+                axis(2)
+                box(bty = "l")
+            }
+            abline(0,1, lty = "dashed")
+            abline(mod)
+        }
+    }
+
+
+#    plotpred(pred.wa[[1]], varname, ss, lab0, logt)
+#    plotpred(pred.RF[[1]], varname, ss, lab0, logt)
+
+#    print(cor(pred.RF[[1]], use = "pair"))
+#    print(cor(pred.wa[[1]], use = "pair"))
+
+    ## plot RF vs WA tolerance values
+    png(width = 6, height = 4, pointsize = 10, units = "in", res = 600,
+        file = "optcomp.png")
+
+    par(mar = c(4,4,3,1), mfrow = c(2,3), mgp = c(2.3,1,0))
+    for (i in 1:length(varname)) {
+        plot(pred.RF[[2]][[i]], pred.wa[[2]][[i]][names(pred.RF[[2]][[i]])],
+             axes = F, xlab = "RF tolerance values",
+             ylab = "WA optima", pch = 21, col = "grey39", bg = "white")
+        axis(1, at = seq(-0.06, 0.06, by = 0.02))
+        if (logt[i]) {
+            logtick.exp(0.001, 10, c(2), c(F,F))
+        }
+        else  axis(2)
+        abline(h = mean(ss[, varname[i]], na.rm = T), lty = "dashed")
+        abline(v = 0, lty = "dashed")
+        mtext(lab0[i], side = 3, line = 0.5)
+        box(bty = "l")
+    }
+    dev.off()
     dev.new()
     par(mar = c(4,4,3,1), mfrow = c(2,3), mgp= c(2.3,1,0))
-    for (j in 1:length(varname)) {
-        plot(pred.RF[[1]][, varname[j]], ss[, varname[j]], pch = 21,
-             col = "grey", bg = "white",
-             xlab = paste(lab0[j], "(Predicted)"),
-             ylab = paste(lab0[j], "(Observed)"), axes = F)
-        mod <- lm(ss[, varname[j]] ~ pred.RF[[1]][, varname[j]])
-        mtext(paste("R2 =", round(summary(mod)$r.squared, digits = 2)),
-              side = 3, line = 0,
-              cex = 0.8)
-
-        if (logt[j]) {
-            logtick.exp(0.001, 10, c(1,2), c(F,F))
-        }
-        else {
-            axis(1)
-            axis(2)
-            box(bty = "l")
-        }
-        abline(0,1, lty = "dashed")
-        abline(mod)
-    }
-
-    dev.new()
-    par(mar = c(4,4,3,1), mfrow = c(2,3), mgp= c(2.3,1,0))    
     ## simple inference using RF optima
+    infrf <- matrix(NA, ncol = length(varname),
+                    nrow = nrow(ss))
+    dimnames(infrf)[[2]] <- varname
+    taxap <- as.list(rep(NA, times = length(varname)))
+    names(taxap) <- varname
     for (j in 1:length(varname)) {
         peff <- pred.RF[[2]][[j]]
-        infout <- as.matrix(ss[, names(peff)]) %*% peff
-        plot(infout, ss[, varname[j]], pch = 21,
-             col = "grey", bg = "white",
-             xlab = paste(lab0[j], "(Predicted)"),
-             ylab = paste(lab0[j], "(Observed)"), axes = F)
-        mod <- lm(ss[, varname[j]] ~ infout)
-        mtext(paste("R2 =", round(summary(mod)$r.squared, digits = 2)),
-              side = 3, line = 0,
-              cex = 0.8)
-
-        if (logt[j]) {
-            logtick.exp(0.001, 10, c(1,2), c(F,F))
+        iord <- order(-abs(peff))
+        peff <- peff[iord]
+        r2 <- rep(NA, times = length(peff))
+        mn0 <- mean(ss[, varname[j]], na.rm = T)
+        for (k in 2:length(peff)) {
+            inf <- as.matrix(ss[, names(peff[1:k])]) %*% peff[1:k] + mn0
+            mod <- lm(ss[, varname[j]] ~ inf)
+            r2[k] <- summary(mod)$r.squared
         }
-        else {
-            axis(1)
-            axis(2)
-            box(bty = "l")
-        }
-        abline(0,1, lty = "dashed")
-        abline(mod)
+        r2sc <- r2/max(r2, na.rm = T)
+        plot(1:length(peff), r2sc)
+        ntaxa <- sum(r2sc < 0.95,na.rm = T)+1
+        abline(h = 0.95)
+        taxap[[j]] <- peff[1:ntaxa]
+        infrf[,j] <- as.matrix(ss[, names(peff[1:ntaxa])]) %*% peff[1:ntaxa] + mn0
     }
+
+    print(sapply(taxap, length))
+    stop()
+    dev.new()
+    plotpred(infrf, varname, ss, lab0, logt)
+    nout <- table(unlist(sapply(taxap, names)))
+    print(sort(nout))
+
+    ## examine top 6 key taxa for alkalinity
+    print(taxap[[3]])
+
+    require(mgcv)
+    ss0 <- subset(ss, !is.na(alkalinity))
+    png(width = 6, height = 4, pointsize = 7, units = "in", res = 600,
+        file = "te.png")
+    par(mar = c(4,4,3,2), mfrow = c(2:3), mgp = c(2.3,1,0), bty = "l")
+    for (i in names(taxap[[3]][1:6])) {
+        resp <- ss0[, i] > 0
+        bout <- binv(ss0$alkalinity, as.numeric(resp), 20)
+        mod <- gam(resp ~ s(alkalinity, k = 4), data =ss0, family = "binomial")
+        iord <- order(ss0$alkalinity)
+        plot(bout$xb, bout$yb, axes = F, xlab = "Alkalinity",
+             ylab = "Probability of occurrence", pch = 21, col = "grey39",
+             bg = "white")
+        logtick.exp(0.001, 10, c(1), c(F,F))
+        axis(2)
+        lines(ss0$alkalinity[iord], predict(mod, type = "response")[iord])
+        require(stringr)
+        ilab <- str_to_sentence(i)
+        ilab <- gsub("\\.", " ", ilab)
+        mtext(ilab, side =3, line = 0)
+
+        opt <- mean(ss0$alkalinity[resp])
+        abline(v=opt, lty = "dashed")
+    }
+    dev.off()
     stop()
 
-    plot(peff, opt[names(peff)])
+    dev.new()
+    par(mar = c(4,4,3,1), mfrow = c(2,3), mgp = c(2.3,1,0))
+    plot(ss[, varname[1]], ss[, varname[3]])
+    plot(pred.RF[[1]][,3], ss[, varname[1]])
+    print(summary(lm(ss[, varname[1]] ~ pred.RF[[1]][,3])))
+    plot(pred.wa[,3], ss[, varname[1]])
+    print(summary(lm(ss[, varname[1]] ~ pred.wa[,3])))
+
     stop()
+
+    incvec <- !is.na(ss$turbidity)
+    lm1 <- lm(ss$turbidity[incvec] ~ pred.RF[[1]][incvec,1])
+
+    lm2 <- lm(ss$turbidity[incvec] ~ pred.wa[incvec,1])
+    plot(resid(lm1), resid(lm2))
+    print(cor(resid(lm1), resid(lm2)))
+    incvec <- !is.na(ss$alkalinity)
+    lm1 <- lm(ss$alkalinity[incvec] ~ pred.RF[[1]][incvec,3])
+
+    lm2 <- lm(ss$alkalinity[incvec] ~ pred.wa[incvec,3])
+    plot(resid(lm1), resid(lm2))
+    print(cor(resid(lm1), resid(lm2)))
+    stop()
+
+
+
+
 }
 
 
@@ -396,14 +491,11 @@ cluster.env <- function(df1) {
 
 #ssall <- makefinaldf(ss, site.data)
 
-varname <- c("turbidity", "silt_rating", "alkalinity", "chloride",
-             "tp_ug")
-lab0 <- c("Turbidity", "Silt rating", "Alkalinity", "Chloride",
-          "Total P")
+varname <- c("turbidity", "silt_rating", "alkalinity", "chloride", "tp_ug")
+lab0 <- c("Turbidity", "Silt rating", "Alkalinity", "Chloride",  "Total P")
 logt <- c(T, F, T, T, T)
 
 #pred.wa <-runwa(ssall, varname)
-
 #pred.RF <- runRF(ssall, varname)
 
 postp(ssall, varname, pred.RF, lab0, logt)
