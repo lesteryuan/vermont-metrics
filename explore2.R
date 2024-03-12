@@ -323,6 +323,36 @@ postp <- function(ss, varname,  pred.RF, lab0, logt) {
 #    print(cor(pred.RF[[1]], use = "pair"))
 #    print(cor(pred.wa[[1]], use = "pair"))
 
+    pairplot <- function(x,y, xlab, ylab, title0) {
+        plot(x, y, xlab = xlab, ylab = ylab, pch =21, col = "grey",
+             bg = "white", axes = F)
+        mtext(title0, side = 3, line = 0.5)
+        logtick.exp(0.001, 10, c(1,2), c(F,F))
+    }
+
+    varp <- c("turbidity", "alkalinity")
+    tiff(width = 6, height = 2, pointsize = 8, units = "in",
+         res = 600, file = "cmp.tif", type = "cairo")
+    par(mar = c(4,4,3,1), mgp = c(2.3,1,0), mfrow = c(1,3))
+    pairplot(ss[, varp[1]], ss[, varp[2]], "Turbidity", "Alkalinity",
+             "Observed")
+    ## deshrink WA inferences
+    x <- rep(NA, times = nrow(ss))
+    y <- rep(NA, times = nrow(ss))
+    incvec <- !is.na(ss[, varp[1]])
+    mod <- lm(ss[incvec, varp[1]] ~ pred.wa[[1]][incvec, varp[1]])
+    x[incvec] <- predict(mod)
+    incvec <- !is.na(ss[, varp[2]])
+    mod <- lm(ss[incvec, varp[2]] ~ pred.wa[[1]][incvec, varp[2]])
+    y[incvec] <- predict(mod)
+
+    pairplot(x,y, "Turbidity", "Alkalinity",
+             "Weighted averaging")
+    pairplot(pred.RF[[1]][, varp[1]], pred.RF[[1]][, varp[2]], "Turbidity", "Alkalinity",
+             "Random Forest")
+    dev.off()
+
+
     ## plot RF vs WA tolerance values
     png(width = 6, height = 4, pointsize = 10, units = "in", res = 600,
         file = "optcomp.png")
@@ -371,6 +401,21 @@ postp <- function(ss, varname,  pred.RF, lab0, logt) {
     }
 
     print(sapply(taxap, length))
+
+    ## make final table of high value taxa
+    alltaxa <- sort(unique(unlist(sapply(taxap, names))))
+    matp <- matrix(NA, ncol = length(varname), nrow = length(alltaxa))
+    dimnames(matp) <- list(alltaxa, varname)
+
+    for (i in varname) {
+        for (j in 1:length(taxap[[i]])) {
+            matp[names(taxap[[i]])[j],i] <- taxap[[i]][j]
+        }
+    }
+    print(matp)
+    write.table(matp, sep = "\t", row.names = T, file = "matp.txt")
+
+    print(exp(quantile(ss$alkalinity, prob = c(0.25, 0.75), na.rm = T)))
     stop()
     dev.new()
     plotpred(infrf, varname, ss, lab0, logt)
