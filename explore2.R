@@ -54,6 +54,46 @@ explore <- function(bug.data) {
     incvec <- !is.na(bug.data$Species) & !is.na(bug.data$Genus)
     taxon[incvec] <- paste(bug.data$Genus[incvec], bug.data$Species[incvec])
 
+    ## set optioservus species group names to NA because
+    ## they duplicate species names
+    selvec <- bug.data$Genus == "OPTIOSERVUS"
+    print(sort(unique(bug.data$SpeciesGroup[selvec])))
+    bug.data$SpeciesGroup[selvec] <- NA
+
+    ## check to see if species group names are the same as species for any
+    ## genus
+    gen.u <- sort(unique(bug.data$Genus))
+    for (i in gen.u) {
+        selvec <- bug.data$Genus == i
+        selvec[is.na(selvec)] <- FALSE
+        grpnames <- sort(unique(bug.data$SpeciesGroup[selvec]))
+        specnames <- sort(unique(bug.data$Species[selvec]))
+        if (any(grpnames %in% specnames)) {
+            print(i)
+            print(grpnames)
+            print(specnames)
+        }
+    }
+    for (i in gen.u) {
+        selvec <- bug.data$Genus == i
+        selvec[is.na(selvec)] <- FALSE
+        grpnames <- sort(unique(bug.data$SpeciesGroup[selvec]))
+        ## strip out trailing "grp" from grpnmaes
+        w <- regexpr(" ", grpnames)
+        selvec2 <- w != -1
+        grpnames[selvec2] <- substring(grpnames[selvec2], 1, w[selvec2]-1)
+        specnames <- sort(unique(bug.data$Species[selvec]))
+
+        for (j in grpnames) {
+            w <- regexpr(j, specnames)
+            if (any(w != -1)) {
+                print(i)
+                print(grpnames)
+                print(specnames)
+            }
+        }
+    }
+
     incvec <- is.na(bug.data$Species) & ! is.na(bug.data$SpeciesGroup) &
         ! is.na(bug.data$Genus)
     taxon[incvec] <- paste(bug.data$Genus[incvec], bug.data$SpeciesGroup[incvec])
@@ -132,11 +172,15 @@ makefinaldf <- function(ss, site.data) {
     ss$tp_ug <- log(ss$tp_ug)
     ss$nitrate_mg <- log(ss$nitrate_mg) # detection limit issues
     ss$chloride <- log(ss$chloride_mg) # detection limit issues
+    ss$sulfate_mg <- log(ss$sulfate_mg)
+    ss$tn_mg <- log(ss$tn_mg)
     ## drop one outlier alkalinity
     incvec <- ss$alkalinity > 0.1
     incvec[is.na(incvec)] <- T
     ss <- ss[incvec,]
     ss$alkalinity <- log(ss$alkalinity)
+    ss$watershed_imperv <- log(ss$watershed_imperv + 1)
+    ss$finesed_percent <- log(ss$finesed_percent+1)
 
     ## turbidity has a bunch of measurements that are zero
     ## set these to half the minimum positive value that was detected
@@ -288,11 +332,11 @@ runRF <- function(ss, varname) {
     return(list(predsav, pefflist))
 }
 
-postp <- function(ss, varname,  pred.RF, lab0, logt) {
+postp <- function(ss, varname,  pred.RF, pred.wa, lab0, logt) {
 
     plotpred <- function(predmat, varname, ss, lab0, logt) {
         dev.new()
-        par(mar = c(4,4,3,1), mfrow = c(2,3), mgp= c(2.3,1,0))
+        par(mar = c(4,4,3,1), mfrow = c(2,2), mgp= c(2.3,1,0))
         for (j in 1:length(varname)) {
             plot(predmat[, varname[j]], ss[, varname[j]], pch = 21,
                  col = "grey", bg = "white",
@@ -304,7 +348,7 @@ postp <- function(ss, varname,  pred.RF, lab0, logt) {
                   cex = 0.8)
 
             if (logt[j]) {
-                logtick.exp(0.001, 10, c(1,2), c(F,F))
+                logtick.exp(0.001, 10, c(1,2), c(T,T))
             }
             else {
                 axis(1)
@@ -317,12 +361,12 @@ postp <- function(ss, varname,  pred.RF, lab0, logt) {
     }
 
 
-#    plotpred(pred.wa[[1]], varname, ss, lab0, logt)
-#    plotpred(pred.RF[[1]], varname, ss, lab0, logt)
-
-#    print(cor(pred.RF[[1]], use = "pair"))
-#    print(cor(pred.wa[[1]], use = "pair"))
-
+    plotpred(pred.wa[[1]], varname, ss, lab0, logt)
+    plotpred(pred.RF[[1]], varname, ss, lab0, logt)
+    stop()
+ #   print(cor(pred.RF[[1]], use = "pair"))
+ #   print(cor(pred.wa[[1]], use = "pair"))
+ #   stop()
     pairplot <- function(x,y, xlab, ylab, title0) {
         plot(x, y, xlab = xlab, ylab = ylab, pch =21, col = "grey",
              bg = "white", axes = F)
@@ -354,8 +398,8 @@ postp <- function(ss, varname,  pred.RF, lab0, logt) {
 
 
     ## plot RF vs WA tolerance values
-    png(width = 6, height = 4, pointsize = 10, units = "in", res = 600,
-        file = "optcomp.png")
+    tiff(width = 6, height = 4, pointsize = 10, units = "in", res = 600,
+        file = "optcomp.tif", type = "cairo")
 
     par(mar = c(4,4,3,1), mfrow = c(2,3), mgp = c(2.3,1,0))
     for (i in 1:length(varname)) {
@@ -373,6 +417,7 @@ postp <- function(ss, varname,  pred.RF, lab0, logt) {
         box(bty = "l")
     }
     dev.off()
+
     dev.new()
     par(mar = c(4,4,3,1), mfrow = c(2,3), mgp= c(2.3,1,0))
     ## simple inference using RF optima
@@ -416,7 +461,7 @@ postp <- function(ss, varname,  pred.RF, lab0, logt) {
     write.table(matp, sep = "\t", row.names = T, file = "matp.txt")
 
     print(exp(quantile(ss$alkalinity, prob = c(0.25, 0.75), na.rm = T)))
-    stop()
+
     dev.new()
     plotpred(infrf, varname, ss, lab0, logt)
     nout <- table(unlist(sapply(taxap, names)))
@@ -427,8 +472,8 @@ postp <- function(ss, varname,  pred.RF, lab0, logt) {
 
     require(mgcv)
     ss0 <- subset(ss, !is.na(alkalinity))
-    png(width = 6, height = 4, pointsize = 7, units = "in", res = 600,
-        file = "te.png")
+    tiff(width = 6, height = 4, pointsize = 10, units = "in", res = 600,
+        file = "te.tif", type = "cairo")
     par(mar = c(4,4,3,2), mfrow = c(2:3), mgp = c(2.3,1,0), bty = "l")
     for (i in names(taxap[[3]][1:6])) {
         resp <- ss0[, i] > 0
@@ -526,21 +571,28 @@ cluster.env <- function(df1) {
 ## eukiefferiella, tvetenia, orthocladius/euorthocladius, simulium,
 ## baetis, ephemerella*, maccaffertium*, brachycentrus, hydropsyche,
 ## chimarra, rhyacophila, acroneuria, paragnetina, pteronarcys,
+## epeorus
 
 ## *keeping all macaffertium rather than just m. vicarium yields a
 ## better model for salinity
 ## ephemerella is an indicator for salinity, but not when only species
 ## level data are used.
 
+## oulimnius should be left at genus level.
+
 #cluster.env(site.data)
 
 #ssall <- makefinaldf(ss, site.data)
 
 varname <- c("turbidity", "silt_rating", "alkalinity", "chloride", "tp_ug")
+varname2 <- c("sulfate_mg", "tn_mg", "finesed_percent",
+             "watershed_imperv")
 lab0 <- c("Turbidity", "Silt rating", "Alkalinity", "Chloride",  "Total P")
+
+lab02 <-  c("Sulfate", "Total N", "Fine sediment", "Imperviousness")
 logt <- c(T, F, T, T, T)
+logt2 <- c(T, T, T,T)
+pred.wa <-runwa(ssall, varname)
+#pred.RF2 <- runRF(ssall, varname2)
 
-#pred.wa <-runwa(ssall, varname)
-#pred.RF <- runRF(ssall, varname)
-
-postp(ssall, varname, pred.RF, lab0, logt)
+#postp(ssall, varname2, pred.RF2, pred.wa2, lab02, logt2)
