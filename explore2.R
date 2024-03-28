@@ -196,6 +196,7 @@ makefinaldf <- function(ss, site.data) {
 
 runwa <- function(ss, varname) {
 
+    require(rioja)
     tnames <- attr(ss, "taxa")
 
     ## set up 10 fold x validation
@@ -207,45 +208,30 @@ runwa <- function(ss, varname) {
     istart <- istart[-11]
 
     pred.wa <- matrix(NA, ncol = length(varname), nrow = nrow(ss))
+    pred.wa.pls <- matrix(NA, ncol = length(varname), nrow = nrow(ss))
     optlist <- as.list(rep(NA, times = length(varname)))
+    optlist.pls <- as.list(rep(NA, times = length(varname)))
     dimnames(pred.wa)[[2]] <- varname
+    dimnames(pred.wa.pls)[[2]] <- varname
 
+    np <- 2
     for (j in 1:length(varname)) {
 
-        for (k in 1:10) {
-            ind <- isamp[istart[k]:istop[k]]
-            ss0 <- ss[-ind,]
+        incvec <- ! is.na(ss[, varname[j]])
+        mod <- WAPLS(ss[incvec,tnames], ss[incvec, varname[j]],
+                     npls = np)
+        predout <- crossval(mod, cv.method  = "loo")
+#        screeplot(predout)
+        ## first component is simple WA
+        ## second component is WAPLS with 2 components
+        pred.wa[incvec,j] <- predout$predicted[,1]
+        pred.wa.pls[incvec,j] <- predout$predicted[,np]
 
-            opt <- rep(NA, times = length(tnames))
-            names(opt) <- tnames
-            for (i in 1:length(tnames)) {
-                selvec <- ss0[, tnames[i]] > 0
-                opt[i] <- mean(ss0[selvec, varname[j]], na.rm = T)
-            }
-
-            inf <- rep(NA, length(ind))
-            for (i in 1:length(ind)) {
-                selvec <- ss[ind[i], tnames] > 0
-                inf[i] <- mean(opt[selvec])
-            }
-            pred.wa[ind,j] <- inf
-        }
-
-        ## one more run to get optima from full data set
-        opt <- rep(NA, times = length(tnames))
-        names(opt) <- tnames
-        for (i in 1:length(tnames)) {
-            selvec <- ss[, tnames[i]] > 0
-            opt[i] <- mean(ss[selvec, varname[j]], na.rm = T)
-        }
-
-#        modfit <- lm(ss0[, varname[j]]~inf)
-#        cc <- coef(modfit)
-#        pred.wa[incvec,j] <- predict(modfit)
-        ## deshrink optima
-        optlist[[j]] <- opt
+        optlist[[j]] <- mod$coefficients[,1]
+        optlist.pls[[j]] <- mod$coefficients[,np]
     }
-    return(list(pred.wa, optlist))
+    return(list(pred.wa, optlist, pred.wa.pls, optlist.pls))
+
 }
 
 ## run RF model for inference
@@ -336,7 +322,7 @@ postp <- function(ss, varname,  pred.RF, pred.wa, lab0, logt) {
 
     plotpred <- function(predmat, varname, ss, lab0, logt) {
         dev.new()
-        par(mar = c(4,4,3,1), mfrow = c(2,2), mgp= c(2.3,1,0))
+        par(mar = c(4,4,3,1), mfrow = c(2,3), mgp= c(2.3,1,0))
         for (j in 1:length(varname)) {
             plot(predmat[, varname[j]], ss[, varname[j]], pch = 21,
                  col = "grey", bg = "white",
@@ -361,56 +347,63 @@ postp <- function(ss, varname,  pred.RF, pred.wa, lab0, logt) {
     }
 
 
-    plotpred(pred.wa[[1]], varname, ss, lab0, logt)
-    plotpred(pred.RF[[1]], varname, ss, lab0, logt)
-    stop()
- #   print(cor(pred.RF[[1]], use = "pair"))
- #   print(cor(pred.wa[[1]], use = "pair"))
+#    plotpred(pred.wa[[1]], varname, ss, lab0, logt)
+#    plotpred(pred.wa[[3]], varname, ss, lab0, logt)
+#    plotpred(pred.RF[[1]], varname, ss, lab0, logt)
  #   stop()
-    pairplot <- function(x,y, xlab, ylab, title0) {
+    
+#    print(cor(pred.wa[[1]], use = "pair"))
+#    print(cor(pred.wa[[3]], use = "pair"))
+#    print(cor(pred.RF[[1]], use = "pair"))
+#    stop()
+    pairplot <- function(x,y, xlab, ylab, title0, xlim, ylim) {
         plot(x, y, xlab = xlab, ylab = ylab, pch =21, col = "grey",
-             bg = "white", axes = F)
+             bg = "white", axes = F, xlim = xlim0, ylim = ylim0)
         mtext(title0, side = 3, line = 0.5)
         logtick.exp(0.001, 10, c(1,2), c(F,F))
     }
 
-    varp <- c("turbidity", "alkalinity")
-    tiff(width = 6, height = 2, pointsize = 8, units = "in",
-         res = 600, file = "cmp.tif", type = "cairo")
-    par(mar = c(4,4,3,1), mgp = c(2.3,1,0), mfrow = c(1,3))
-    pairplot(ss[, varp[1]], ss[, varp[2]], "Turbidity", "Alkalinity",
-             "Observed")
-    ## deshrink WA inferences
-    x <- rep(NA, times = nrow(ss))
-    y <- rep(NA, times = nrow(ss))
-    incvec <- !is.na(ss[, varp[1]])
-    mod <- lm(ss[incvec, varp[1]] ~ pred.wa[[1]][incvec, varp[1]])
-    x[incvec] <- predict(mod)
-    incvec <- !is.na(ss[, varp[2]])
-    mod <- lm(ss[incvec, varp[2]] ~ pred.wa[[1]][incvec, varp[2]])
-    y[incvec] <- predict(mod)
-
-    pairplot(x,y, "Turbidity", "Alkalinity",
-             "Weighted averaging")
-    pairplot(pred.RF[[1]][, varp[1]], pred.RF[[1]][, varp[2]], "Turbidity", "Alkalinity",
-             "Random Forest")
-    dev.off()
-
+    dopairs <- F
+    if (dopairs) {
+        varp <- c("turbidity", "alkalinity")
+        tiff(width = 4.5, height = 4.5, pointsize = 8, units = "in",
+             res = 600, file = "cmp.tif", type = "cairo")
+        par(mar = c(4,4,3,1), mgp = c(2.3,1,0), mfrow = c(2,2))
+        xlim0 <- range(c(ss[, varp[1]], pred.wa[[3]][, varp[1]]), na.rm = T)
+        ylim0 <- range(c(ss[, varp[2]], pred.wa[[3]][, varp[2]]), na.rm = T)
+        pairplot(ss[, varp[1]], ss[, varp[2]], "Turbidity", "Alkalinity",
+                 "Observed", xlim = xlim0, ylim = ylim0)
+        x <- pred.wa[[1]][, varp[1]]
+        y <- pred.wa[[1]][, varp[2]]
+        
+        pairplot(pred.wa[[1]][, varp[1]], pred.wa[[1]][, varp[2]],
+                 "Turbidity", "Alkalinity",
+                 "Weighted averaging", xlim = xlim0, ylim = ylim0)
+        pairplot(pred.wa[[3]][, varp[1]], pred.wa[[3]][, varp[2]],
+                 "Turbidity", "Alkalinity",
+                 "WA-PLS", xlim = xlim0, ylim = ylim0)
+        pairplot(pred.RF[[1]][, varp[1]], pred.RF[[1]][, varp[2]], "Turbidity", "Alkalinity",
+                 "Random Forest", xlim = xlim0, ylim = xlim0)
+        dev.off()
+    }
 
     ## plot RF vs WA tolerance values
-    tiff(width = 6, height = 4, pointsize = 10, units = "in", res = 600,
-        file = "optcomp.tif", type = "cairo")
-
+    tiff(width = 5, height = 2, pointsize = 10, units = "in", res = 600,
+         file = "optcomp.tif", type = "cairo")
+    par(mar = c(4,4,1,1), mfrow = c(1,2), mgp = c(2.3,1,0))
+    hist(pred.wa[[4]][[3]], breaks = 20, xlab = "WA-PLS optima", main = "")
+    hist(pred.RF[[2]][[3]], breaks = 20, xlab = "RF tolerance value", main = "")
+    dev.off()
+    print("here")
+    stop()
+    dev.new()
     par(mar = c(4,4,3,1), mfrow = c(2,3), mgp = c(2.3,1,0))
     for (i in 1:length(varname)) {
-        plot(pred.RF[[2]][[i]], pred.wa[[2]][[i]][names(pred.RF[[2]][[i]])],
+        plot(pred.RF[[2]][[i]], pred.wa[[4]][[i]][names(pred.RF[[2]][[i]])],
              axes = F, xlab = "RF tolerance values",
-             ylab = "WA optima", pch = 21, col = "grey39", bg = "white")
+             ylab = "WAPLS optima", pch = 21, col = "grey39", bg = "white")
         axis(1, at = seq(-0.06, 0.06, by = 0.02))
-        if (logt[i]) {
-            logtick.exp(0.001, 10, c(2), c(F,F))
-        }
-        else  axis(2)
+        axis(2)
         abline(h = mean(ss[, varname[i]], na.rm = T), lty = "dashed")
         abline(v = 0, lty = "dashed")
         mtext(lab0[i], side = 3, line = 0.5)
@@ -418,32 +411,150 @@ postp <- function(ss, varname,  pred.RF, pred.wa, lab0, logt) {
     }
     dev.off()
 
+    refinewa <- FALSE
+    if (refinewa) {
+        ## simple inference using WAPLS optima
+        infrf <- matrix(NA, ncol = length(varname), nrow = nrow(ss))
+        dimnames(infrf)[[2]] <- varname
+        taxap <- as.list(rep(NA, times = length(varname)))
+        names(taxap) <- varname
+        
+        require(rioja)
+        ntaxapick <- rep(NA, times = length(varname))
+        dev.new()
+        par(mar = c(4,4,1,1), mfrow = c(2,3))
+        for (j in 1:length(varname)) {
+            incvec <- !is.na(ss[, varname[j]])
+            ss0 <- ss[incvec,]
+            
+            ## set up 10 fold x-validation
+            set.seed(10)
+            isamp <- sample(nrow(ss0), nrow(ss0))
+            nbin <- nrow(ss0)/10
+            print(nrow(ss0))
+            istart <- round(seq(1,  by = nbin, length = 11))
+            istop <- istart[-1]-1
+            istart <- istart[-11]
+            
+            tnames <- names(pred.wa[[4]][[1]])
+            
+            ntaxatest <- seq(15, length(tnames), by = 4)
+            infmat <- matrix(NA, ncol = length(ntaxatest), nrow = nrow(ss0))
+            for (i in 1:10) {
+                sscalib <- ss0[-isamp[istart[i]:istop[i]],]
+                ssvalid <- ss0[isamp[istart[i]:istop[i]],]
+                mod <- WAPLS(sscalib[,tnames], sscalib[, varname[j]],
+                             npls = 2)
+                opt <- mod$coefficients[,2]
+                opt.sc <- opt - mean(opt)
+                iord <- rev(order(abs(opt.sc)))
+                opt <- opt[iord]
+                
+                for (k in 1:length(ntaxatest)) {
+                    ntaxa <- ntaxatest[k]
+                    infmat[isamp[istart[i]:istop[i]],k] <-
+                        (as.matrix(ssvalid[, names(opt[1:ntaxa])]) %*% opt[1:ntaxa])/
+                        apply(as.matrix(ssvalid[, names(opt[1:ntaxa])]), 1, sum)
+                }
+            }
+            r2 <- rep(NA, times = length(ntaxatest))
+            for (k in 1:length(ntaxatest)) {
+                mod <- lm(ss0[, varname[j]] ~ infmat[,k])
+                r2[k] <- summary(mod)$r.squared
+            }
+            mod0 <- lm(ss[, varname[j]] ~ pred.wa[[3]][,j])
+            r20 <- summary(mod0)$r.squared
+            
+            plot(ntaxatest, r2/r20)
+            ntaxapick[j] <- approx(r2/r20, ntaxatest, 0.95, ties = "ordered")$y
+            abline(h = 0.95)
+            abline(v = ntaxapick[j])
+        }
+        print(round(ntaxapick))
+    }
+
+    require(pdp)
+    require(ranger)
+    require(future.apply)
     dev.new()
     par(mar = c(4,4,3,1), mfrow = c(2,3), mgp= c(2.3,1,0))
     ## simple inference using RF optima
-    infrf <- matrix(NA, ncol = length(varname),
-                    nrow = nrow(ss))
+    infrf <- matrix(NA, ncol = length(varname), nrow = nrow(ss))
     dimnames(infrf)[[2]] <- varname
     taxap <- as.list(rep(NA, times = length(varname)))
     names(taxap) <- varname
-    for (j in 1:length(varname)) {
-        peff <- pred.RF[[2]][[j]]
-        iord <- order(-abs(peff))
-        peff <- peff[iord]
-        r2 <- rep(NA, times = length(peff))
-        mn0 <- mean(ss[, varname[j]], na.rm = T)
-        for (k in 2:length(peff)) {
-            inf <- as.matrix(ss[, names(peff[1:k])]) %*% peff[1:k] + mn0
-            mod <- lm(ss[, varname[j]] ~ inf)
+    ntaxapick <- rep(NA, times = length(varname))
+    for (j in 3:4) {
+
+        incvec <- !is.na(ss[, varname[j]])
+        ss0 <- ss[incvec,]
+            
+        ## set up 10 fold x-validation
+        set.seed(10)
+        isamp <- sample(nrow(ss0), nrow(ss0))
+        nbin <- nrow(ss0)/10
+        print(nrow(ss0))
+        istart <- round(seq(1,  by = nbin, length = 11))
+        istop <- istart[-1]-1
+        istart <- istart[-11]
+
+        isamplist <- as.list(rep(NA, times = 10))
+        for (i in 1:10) {
+            isamplist[[i]] <- isamp[istart[i]:istop[i]]
+        }
+
+        tnames <- names(pred.RF[[2]][[j]])
+        ntaxatest <- seq(2, length(tnames), by = 2)
+
+        getinf <- function(isamp, ss0, tnames, varname, ntaxatest) {
+            sscalib <- ss0[-isamp,]
+            ssvalid <- ss0[isamp,]
+            mod <- ranger(data = ss0[, c(varname, tnames)],
+                          dependent.variable.name = varname,
+                          num.trees = 2000,
+                          importance = "permutation")
+            ## calculate opt for each taxon
+            peff <- rep(NA, times = length(tnames))
+            names(peff) <- tnames
+            for (k in 1:length(tnames)) {
+                pout <- partial(mod, pred.var = tnames[k], plot = FALSE)
+                peff[k] <- (pout$yhat[2] - pout$yhat[1])
+            }
+            iord <- order(-abs(peff))
+            peff <- peff[iord]
+            infmat <- matrix(NA, ncol = length(ntaxatest), nrow = nrow(ssvalid))
+            for (k in 1:length(ntaxatest)) {
+                ntaxa <- ntaxatest[k]
+                infmat[,k]  <-
+                    as.matrix(ssvalid[, names(peff[1:ntaxa])]) %*%
+                    peff[1:ntaxa]
+            }
+            return(infmat)
+        }
+
+        plan(multisession, workers =10)
+        infall <- future_lapply(isamplist, getinf, ss0 = ss0, tnames = tnames,
+                                varname = varname[j], ntaxatest = ntaxatest,
+                                future.seed = TRUE)
+        plan(sequential)
+        inf0 <- infall[[1]]
+        for (i in 2:10) inf0 <- rbind(inf0, infall[[i]])
+
+        mod0 <- lm(ss[, varname[j]] ~ pred.RF[[1]][,j])
+        r20 <- summary(mod0)$r.squared
+
+        r2 <- rep(NA, times = length(ntaxatest))
+        for (k in 1:length(ntaxatest)) {
+            mod <- lm(ss0[unlist(isamplist), varname[j]] ~ inf0[,k])
             r2[k] <- summary(mod)$r.squared
         }
-        r2sc <- r2/max(r2, na.rm = T)
-        plot(1:length(peff), r2sc)
-        ntaxa <- sum(r2sc < 0.95,na.rm = T)+1
-        abline(h = 0.95)
-        taxap[[j]] <- peff[1:ntaxa]
-        infrf[,j] <- as.matrix(ss[, names(peff[1:ntaxa])]) %*% peff[1:ntaxa] + mn0
+
+        plot(ntaxatest, r2/r20)
+        ntaxapick[j] <- approx(r2/r20, ntaxatest, 0.95, ties = "ordered")$y
+        abline(v = ntaxapick[j])
     }
+    print(ntaxapick)
+    stop()
 
     print(sapply(taxap, length))
 
@@ -458,10 +569,11 @@ postp <- function(ss, varname,  pred.RF, pred.wa, lab0, logt) {
         }
     }
     print(matp)
-    write.table(matp, sep = "\t", row.names = T, file = "matp.txt")
+    write.table(matp, sep = "\t", row.names = T, file = "matp2.txt")
 
     print(exp(quantile(ss$alkalinity, prob = c(0.25, 0.75), na.rm = T)))
 
+    stop()
     dev.new()
     plotpred(infrf, varname, ss, lab0, logt)
     nout <- table(unlist(sapply(taxap, names)))
@@ -592,7 +704,10 @@ lab0 <- c("Turbidity", "Silt rating", "Alkalinity", "Chloride",  "Total P")
 lab02 <-  c("Sulfate", "Total N", "Fine sediment", "Imperviousness")
 logt <- c(T, F, T, T, T)
 logt2 <- c(T, T, T,T)
-pred.wa <-runwa(ssall, varname)
+#pred.wa.pls <- runwa(ssall, varname)
+#pred.wa <-runwa(ssall, varname)
 #pred.RF2 <- runRF(ssall, varname2)
 
-#postp(ssall, varname2, pred.RF2, pred.wa2, lab02, logt2)
+#postp(ssall, c(varname, varname2), pred.RF.all, pred.wa.all, c(lab0,lab02),
+#      c(logt, logt2))
+postp(ssall, varname, pred.RF, pred.wa.pls, lab0,logt)
