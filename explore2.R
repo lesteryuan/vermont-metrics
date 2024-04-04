@@ -394,8 +394,7 @@ postp <- function(ss, varname,  pred.RF, pred.wa, lab0, logt) {
     hist(pred.wa[[4]][[3]], breaks = 20, xlab = "WA-PLS optima", main = "")
     hist(pred.RF[[2]][[3]], breaks = 20, xlab = "RF tolerance value", main = "")
     dev.off()
-    print("here")
-    stop()
+
     dev.new()
     par(mar = c(4,4,3,1), mfrow = c(2,3), mgp = c(2.3,1,0))
     for (i in 1:length(varname)) {
@@ -473,106 +472,128 @@ postp <- function(ss, varname,  pred.RF, pred.wa, lab0, logt) {
         print(round(ntaxapick))
     }
 
-    require(pdp)
-    require(ranger)
-    require(future.apply)
-    dev.new()
-    par(mar = c(4,4,3,1), mfrow = c(2,3), mgp= c(2.3,1,0))
-    ## simple inference using RF optima
-    infrf <- matrix(NA, ncol = length(varname), nrow = nrow(ss))
-    dimnames(infrf)[[2]] <- varname
-    taxap <- as.list(rep(NA, times = length(varname)))
-    names(taxap) <- varname
-    ntaxapick <- rep(NA, times = length(varname))
-    for (j in 3:4) {
+    refineRF <- F
+    if (refineRF) {
 
-        incvec <- !is.na(ss[, varname[j]])
-        ss0 <- ss[incvec,]
+        require(pdp)
+        require(ranger)
+        require(future.apply)
+        dev.new()
+        par(mar = c(4,4,3,1), mfrow = c(2,3), mgp= c(2.3,1,0))
+        ntaxapick <- rep(NA, times = length(varname))
+        for (j in 1:length(varname)) {
             
-        ## set up 10 fold x-validation
-        set.seed(10)
-        isamp <- sample(nrow(ss0), nrow(ss0))
-        nbin <- nrow(ss0)/10
-        print(nrow(ss0))
-        istart <- round(seq(1,  by = nbin, length = 11))
-        istop <- istart[-1]-1
-        istart <- istart[-11]
-
-        isamplist <- as.list(rep(NA, times = 10))
-        for (i in 1:10) {
-            isamplist[[i]] <- isamp[istart[i]:istop[i]]
-        }
-
-        tnames <- names(pred.RF[[2]][[j]])
-        ntaxatest <- seq(2, length(tnames), by = 2)
-
-        getinf <- function(isamp, ss0, tnames, varname, ntaxatest) {
-            sscalib <- ss0[-isamp,]
-            ssvalid <- ss0[isamp,]
-            mod <- ranger(data = ss0[, c(varname, tnames)],
-                          dependent.variable.name = varname,
-                          num.trees = 2000,
-                          importance = "permutation")
-            ## calculate opt for each taxon
-            peff <- rep(NA, times = length(tnames))
-            names(peff) <- tnames
-            for (k in 1:length(tnames)) {
-                pout <- partial(mod, pred.var = tnames[k], plot = FALSE)
-                peff[k] <- (pout$yhat[2] - pout$yhat[1])
+            incvec <- !is.na(ss[, varname[j]])
+            ss0 <- ss[incvec,]
+            
+            ## set up 10 fold x-validation
+            set.seed(10)
+            isamp <- sample(nrow(ss0), nrow(ss0))
+            nbin <- nrow(ss0)/10
+            print(nrow(ss0))
+            istart <- round(seq(1,  by = nbin, length = 11))
+            istop <- istart[-1]-1
+            istart <- istart[-11]
+            
+            isamplist <- as.list(rep(NA, times = 10))
+            for (i in 1:10) {
+                isamplist[[i]] <- isamp[istart[i]:istop[i]]
             }
-            iord <- order(-abs(peff))
-            peff <- peff[iord]
-            infmat <- matrix(NA, ncol = length(ntaxatest), nrow = nrow(ssvalid))
+            
+            tnames <- names(pred.RF[[2]][[j]])
+            ntaxatest <- seq(2, length(tnames), by = 2)
+            
+            getinf <- function(isamp, ss0, tnames, varname, ntaxatest) {
+                sscalib <- ss0[-isamp,]
+                ssvalid <- ss0[isamp,]
+                mod <- ranger(data = sscalib[, c(varname, tnames)],
+                              dependent.variable.name = varname,
+                              num.trees = 2000,
+                              importance = "permutation")
+
+                ## calculate opt for each taxon
+                peff <- rep(NA, times = length(tnames))
+                names(peff) <- tnames
+                for (k in 1:length(tnames)) {
+                    pout <- partial(mod, pred.var = tnames[k], plot = FALSE)
+                    peff[k] <- (pout$yhat[2] - pout$yhat[1])
+                }
+                iord <- order(-abs(peff))
+                peff <- peff[iord]
+                infmat <- matrix(NA, ncol = length(ntaxatest), nrow = nrow(ssvalid))
+                for (k in 1:length(ntaxatest)) {
+                    ntaxa <- ntaxatest[k]
+                    infmat[,k]  <-
+                        as.matrix(ssvalid[, names(peff[1:ntaxa])]) %*%
+                        peff[1:ntaxa]
+                }
+                return(infmat)
+            }
+            plan(multisession, workers =10)
+            infall <- future_lapply(isamplist, getinf, ss0 = ss0, tnames = tnames,
+                                    varname = varname[j], ntaxatest = ntaxatest,
+                                    future.seed = TRUE)
+            plan(sequential)
+            inf0 <- infall[[1]]
+            for (i in 2:10) inf0 <- rbind(inf0, infall[[i]])
+            
+            mod0 <- lm(ss[, varname[j]] ~ pred.RF[[1]][,j])
+            r20 <- summary(mod0)$r.squared
+            
+            r2 <- rep(NA, times = length(ntaxatest))
             for (k in 1:length(ntaxatest)) {
-                ntaxa <- ntaxatest[k]
-                infmat[,k]  <-
-                    as.matrix(ssvalid[, names(peff[1:ntaxa])]) %*%
-                    peff[1:ntaxa]
+                mod <- lm(ss0[unlist(isamplist), varname[j]] ~ inf0[,k])
+                r2[k] <- summary(mod)$r.squared
             }
-            return(infmat)
+            print(varname[j])
+            cat("Max scaled r2:", max(r2/r20), "\n")
+            thold <- 0.99*max(r2/r20)
+            
+            plot(ntaxatest, r2/r20)
+            ## find ntaxa corresponding to thold
+            ip <- 1
+            while(r2[ip]/r20 < thold) ip <- ip+1
+            ntaxapick[j] <- (ntaxatest[ip] - ntaxatest[ip-1])/
+                (r2[ip]-r2[ip-1])*r20*(thold - r2[ip-1]/r20) + ntaxatest[ip-1]
+            print(ntaxapick[j])
+            abline(v = ntaxapick[j])
+            abline(h = thold)
         }
-
-        plan(multisession, workers =10)
-        infall <- future_lapply(isamplist, getinf, ss0 = ss0, tnames = tnames,
-                                varname = varname[j], ntaxatest = ntaxatest,
-                                future.seed = TRUE)
-        plan(sequential)
-        inf0 <- infall[[1]]
-        for (i in 2:10) inf0 <- rbind(inf0, infall[[i]])
-
-        mod0 <- lm(ss[, varname[j]] ~ pred.RF[[1]][,j])
-        r20 <- summary(mod0)$r.squared
-
-        r2 <- rep(NA, times = length(ntaxatest))
-        for (k in 1:length(ntaxatest)) {
-            mod <- lm(ss0[unlist(isamplist), varname[j]] ~ inf0[,k])
-            r2[k] <- summary(mod)$r.squared
-        }
-
-        plot(ntaxatest, r2/r20)
-        ntaxapick[j] <- approx(r2/r20, ntaxatest, 0.95, ties = "ordered")$y
-        abline(v = ntaxapick[j])
+        print(ntaxapick)
+        return(ntaxapick)
     }
-    print(ntaxapick)
-    stop()
-
-    print(sapply(taxap, length))
-
-    ## make final table of high value taxa
-    alltaxa <- sort(unique(unlist(sapply(taxap, names))))
-    matp <- matrix(NA, ncol = length(varname), nrow = length(alltaxa))
-    dimnames(matp) <- list(alltaxa, varname)
-
-    for (i in varname) {
-        for (j in 1:length(taxap[[i]])) {
-            matp[names(taxap[[i]])[j],i] <- taxap[[i]][j]
+    else {
+        ## make final table of high value taxa
+        taxap <- as.list(rep(NA, times = length(varname)))
+        names(taxap) <- varname
+        for (i in 1:length(varname)) {
+            iord <- rev(order(abs(pred.RF[[2]][[i]])))
+            taxap[[i]] <- pred.RF[[2]][[i]][iord[1:round(ntaxapick[i])]]
         }
+        alltaxa <- sort(unique(unlist(sapply(taxap, names))))
+
+        matp <- matrix(NA, ncol = length(varname), nrow = length(alltaxa))
+        dimnames(matp) <- list(alltaxa, varname)
+
+        for (i in varname) {
+            for (j in 1:length(taxap[[i]])) {
+                matp[names(taxap[[i]])[j],i] <- taxap[[i]][j]
+            }
+        }
+        print(matp)
+
+        dev.new()
+        par(mar = c(4,4,1,1), mfrow = c(3,3))
+        ## test tolerance values
+        for (i in 1:length(varname)) {
+            tv <- sort(matp[,i])
+            pred <- as.matrix(ss[, names(tv)]) %*% tv
+            plot(pred, ss[, varname[i]])
+            mod <- lm(ss[, varname[i]] ~ pred)
+            print(summary(mod))
+        }
+        write.table(matp, sep = "\t", row.names = T, file = "matp2.txt")
     }
-    print(matp)
-    write.table(matp, sep = "\t", row.names = T, file = "matp2.txt")
-
-    print(exp(quantile(ss$alkalinity, prob = c(0.25, 0.75), na.rm = T)))
-
     stop()
     dev.new()
     plotpred(infrf, varname, ss, lab0, logt)
@@ -704,10 +725,13 @@ lab0 <- c("Turbidity", "Silt rating", "Alkalinity", "Chloride",  "Total P")
 lab02 <-  c("Sulfate", "Total N", "Fine sediment", "Imperviousness")
 logt <- c(T, F, T, T, T)
 logt2 <- c(T, T, T,T)
-#pred.wa.pls <- runwa(ssall, varname)
+#pred.wa.pls <- runwa(ssall, c(varname, varname2))
 #pred.wa <-runwa(ssall, varname)
 #pred.RF2 <- runRF(ssall, varname2)
 
 #postp(ssall, c(varname, varname2), pred.RF.all, pred.wa.all, c(lab0,lab02),
 #      c(logt, logt2))
-postp(ssall, varname, pred.RF, pred.wa.pls, lab0,logt)
+#ntaxapick <- postp(ssall, c(varname, varname2), pred.RF.all, pred.wa.pls,
+#                   c(lab0,lab02),c(logt, logt2))
+postp(ssall, c(varname, varname2), pred.RF.all, pred.wa.pls,
+      c(lab0,lab02),c(logt, logt2))
