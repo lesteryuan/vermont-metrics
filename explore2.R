@@ -322,7 +322,7 @@ postp <- function(ss, varname,  pred.RF, pred.wa, lab0, logt) {
 
     plotpred <- function(predmat, varname, ss, lab0, logt) {
         dev.new()
-        par(mar = c(4,4,3,1), mfrow = c(2,3), mgp= c(2.3,1,0))
+        par(mar = c(4,4,3,1), mfrow = c(3,3), mgp= c(2.3,1,0))
         for (j in 1:length(varname)) {
             plot(predmat[, varname[j]], ss[, varname[j]], pch = 21,
                  col = "grey", bg = "white",
@@ -348,10 +348,10 @@ postp <- function(ss, varname,  pred.RF, pred.wa, lab0, logt) {
 
 
 #    plotpred(pred.wa[[1]], varname, ss, lab0, logt)
-#    plotpred(pred.wa[[3]], varname, ss, lab0, logt)
-#    plotpred(pred.RF[[1]], varname, ss, lab0, logt)
+    plotpred(pred.wa[[3]], varname, ss, lab0, logt) ## this is 2-comp WA-PLS
+    plotpred(pred.RF[[1]], varname, ss, lab0, logt)
  #   stop()
-    
+
 #    print(cor(pred.wa[[1]], use = "pair"))
 #    print(cor(pred.wa[[3]], use = "pair"))
 #    print(cor(pred.RF[[1]], use = "pair"))
@@ -375,7 +375,7 @@ postp <- function(ss, varname,  pred.RF, pred.wa, lab0, logt) {
                  "Observed", xlim = xlim0, ylim = ylim0)
         x <- pred.wa[[1]][, varp[1]]
         y <- pred.wa[[1]][, varp[2]]
-        
+
         pairplot(pred.wa[[1]][, varp[1]], pred.wa[[1]][, varp[2]],
                  "Turbidity", "Alkalinity",
                  "Weighted averaging", xlim = xlim0, ylim = ylim0)
@@ -417,7 +417,7 @@ postp <- function(ss, varname,  pred.RF, pred.wa, lab0, logt) {
         dimnames(infrf)[[2]] <- varname
         taxap <- as.list(rep(NA, times = length(varname)))
         names(taxap) <- varname
-        
+
         require(rioja)
         ntaxapick <- rep(NA, times = length(varname))
         dev.new()
@@ -425,7 +425,7 @@ postp <- function(ss, varname,  pred.RF, pred.wa, lab0, logt) {
         for (j in 1:length(varname)) {
             incvec <- !is.na(ss[, varname[j]])
             ss0 <- ss[incvec,]
-            
+
             ## set up 10 fold x-validation
             set.seed(10)
             isamp <- sample(nrow(ss0), nrow(ss0))
@@ -434,9 +434,9 @@ postp <- function(ss, varname,  pred.RF, pred.wa, lab0, logt) {
             istart <- round(seq(1,  by = nbin, length = 11))
             istop <- istart[-1]-1
             istart <- istart[-11]
-            
+
             tnames <- names(pred.wa[[4]][[1]])
-            
+
             ntaxatest <- seq(15, length(tnames), by = 4)
             infmat <- matrix(NA, ncol = length(ntaxatest), nrow = nrow(ss0))
             for (i in 1:10) {
@@ -448,7 +448,7 @@ postp <- function(ss, varname,  pred.RF, pred.wa, lab0, logt) {
                 opt.sc <- opt - mean(opt)
                 iord <- rev(order(abs(opt.sc)))
                 opt <- opt[iord]
-                
+
                 for (k in 1:length(ntaxatest)) {
                     ntaxa <- ntaxatest[k]
                     infmat[isamp[istart[i]:istop[i]],k] <-
@@ -463,7 +463,7 @@ postp <- function(ss, varname,  pred.RF, pred.wa, lab0, logt) {
             }
             mod0 <- lm(ss[, varname[j]] ~ pred.wa[[3]][,j])
             r20 <- summary(mod0)$r.squared
-            
+
             plot(ntaxatest, r2/r20)
             ntaxapick[j] <- approx(r2/r20, ntaxatest, 0.95, ties = "ordered")$y
             abline(h = 0.95)
@@ -482,10 +482,10 @@ postp <- function(ss, varname,  pred.RF, pred.wa, lab0, logt) {
         par(mar = c(4,4,3,1), mfrow = c(2,3), mgp= c(2.3,1,0))
         ntaxapick <- rep(NA, times = length(varname))
         for (j in 1:length(varname)) {
-            
+
             incvec <- !is.na(ss[, varname[j]])
             ss0 <- ss[incvec,]
-            
+
             ## set up 10 fold x-validation
             set.seed(10)
             isamp <- sample(nrow(ss0), nrow(ss0))
@@ -494,15 +494,15 @@ postp <- function(ss, varname,  pred.RF, pred.wa, lab0, logt) {
             istart <- round(seq(1,  by = nbin, length = 11))
             istop <- istart[-1]-1
             istart <- istart[-11]
-            
+
             isamplist <- as.list(rep(NA, times = 10))
             for (i in 1:10) {
                 isamplist[[i]] <- isamp[istart[i]:istop[i]]
             }
-            
+
             tnames <- names(pred.RF[[2]][[j]])
             ntaxatest <- seq(2, length(tnames), by = 2)
-            
+
             getinf <- function(isamp, ss0, tnames, varname, ntaxatest) {
                 sscalib <- ss0[-isamp,]
                 ssvalid <- ss0[isamp,]
@@ -536,10 +536,10 @@ postp <- function(ss, varname,  pred.RF, pred.wa, lab0, logt) {
             plan(sequential)
             inf0 <- infall[[1]]
             for (i in 2:10) inf0 <- rbind(inf0, infall[[i]])
-            
+
             mod0 <- lm(ss[, varname[j]] ~ pred.RF[[1]][,j])
             r20 <- summary(mod0)$r.squared
-            
+
             r2 <- rep(NA, times = length(ntaxatest))
             for (k in 1:length(ntaxatest)) {
                 mod <- lm(ss0[unlist(isamplist), varname[j]] ~ inf0[,k])
@@ -548,7 +548,7 @@ postp <- function(ss, varname,  pred.RF, pred.wa, lab0, logt) {
             print(varname[j])
             cat("Max scaled r2:", max(r2/r20), "\n")
             thold <- 0.99*max(r2/r20)
-            
+
             plot(ntaxatest, r2/r20)
             ## find ntaxa corresponding to thold
             ip <- 1
