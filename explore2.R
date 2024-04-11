@@ -363,7 +363,7 @@ postp <- function(ss, varname,  pred.RF, pred.wa, lab0, logt) {
         logtick.exp(0.001, 10, c(1,2), c(F,F))
     }
 
-    dopairs <- F
+    dopairs <- T
     if (dopairs) {
         varp <- c("turbidity", "alkalinity")
         tiff(width = 4.5, height = 4.5, pointsize = 8, units = "in",
@@ -375,6 +375,7 @@ postp <- function(ss, varname,  pred.RF, pred.wa, lab0, logt) {
                  "Observed", xlim = xlim0, ylim = ylim0)
         x <- pred.wa[[1]][, varp[1]]
         y <- pred.wa[[1]][, varp[2]]
+        points(env.mn$turb, env.mn$alk, pch = 16, cex = 0.6)
         
         pairplot(pred.wa[[1]][, varp[1]], pred.wa[[1]][, varp[2]],
                  "Turbidity", "Alkalinity",
@@ -386,6 +387,7 @@ postp <- function(ss, varname,  pred.RF, pred.wa, lab0, logt) {
                  "Random Forest", xlim = xlim0, ylim = xlim0)
         dev.off()
     }
+    stop()
 
     ## plot RF vs WA tolerance values
     tiff(width = 5, height = 2, pointsize = 10, units = "in", res = 600,
